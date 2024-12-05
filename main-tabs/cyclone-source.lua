@@ -123,19 +123,15 @@ end
 local function toggleBlackHole()
     blackHoleActive = not blackHoleActive
     if blackHoleActive then
-        -- Update all parts in Workspace
         for _, v in next, Workspace:GetDescendants() do
             ForcePart(v)
         end
 
-        -- Handle newly added parts
         Workspace.DescendantAdded:Connect(function(v)
             if blackHoleActive then
                 ForcePart(v)
             end
         end)
-
-        -- Orbit logic for attachments
         spawn(function()
             while blackHoleActive and RunService.RenderStepped:Wait() do
                 angle = angle + math.rad(angleSpeed)
@@ -146,7 +142,6 @@ local function toggleBlackHole()
                     local offsetX = math.cos(angle + angleOffset) * radius
                     local offsetZ = math.sin(angle + angleOffset) * radius
 
-                    -- Move attachment to orbit around the target
                     attachment.WorldCFrame = targetCFrame * CFrame.new(offsetX, 0, offsetZ)
                 end
             end
