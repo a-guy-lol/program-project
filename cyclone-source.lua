@@ -307,5 +307,5 @@ end
 player.CharacterAdded:Connect(onCharacterAdded)
 
 
-uilibrary:AddNoti("UI loaded.", "Zexon has successfully loaded.", 5, true)
+uilibrary:AddNoti("UI loaded.", "Zexon - Cyclone has successfully loaded.", 5, true)
 

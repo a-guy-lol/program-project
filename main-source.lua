@@ -45,7 +45,7 @@ end)
 
 
 local CyclonePage = windowz:CreatePage("Cyclone - FE")
-local CycloneSection = CyclonePage:CreateSection("Main - Settings")
+local CycloneSection = CyclonePage:CreateSection("Cyclone - Load")
 
 CycloneSection:CreateButton("   Execute | Cyclone", function ()
     loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/main-tabs/cyclone-source.lua'))()
