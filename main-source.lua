@@ -49,7 +49,7 @@ local CyclonePage = windowz:CreatePage("Cyclone - FE")
 local CycloneSection = CyclonePage:CreateSection("Main - Settings")
 
 CycloneSection:CreateButton("   Execute | Cyclone", function ()
-    loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
+    loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/main-tabs/cyclone-source.lua'))()
  end)
 
 uilibrary:AddNoti("UI loaded.", "Zexon has successfully loaded.", 5, true)
