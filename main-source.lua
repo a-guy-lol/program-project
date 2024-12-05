@@ -4,7 +4,6 @@ local LocalPlayer = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
 
 
-
 local uilibrary = loadstring(game:HttpGet("https://pastebin.com/raw/1Qg7Lmad"))()
 local windowz = uilibrary:CreateWindow("                                                              Zexon", "Script Menu", true)
 
