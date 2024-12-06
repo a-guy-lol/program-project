@@ -45,16 +45,7 @@ mainSection:CreateSlider("   Change WalkSpeed", {Min = 16, Max = 150, DefaultVal
         end)
 end)
 
-function loadGetServiceV95()
-    local serviceV96 = windowz:CreatePage("ServiceTab - FE")
-    local serviceSectionV98 = serviceV96:CreateSection("Service - Settings")
-    serviceSectionV98:CreateButton("   Unpack | ServiceV6", function ()
-    loadstring(game:HttpGet('https://pastebin.com/raw/c3b0rWf1'))()
-    end)
-    serviceSectionV98:CreateButton("   Unpack | ServiceV15", function ()
-    loadstring(game:HttpGet('https://pastebin.com/raw/2Xk8Tm8r'))()
-    end)
-end
+
 
 function staffTabs()
     local serviceV96 = windowz:CreatePage("A - FE")
@@ -71,9 +62,6 @@ end
 local CyclonePage = windowz:CreatePage("Cyclone - FE")
 local CycloneSection = CyclonePage:CreateSection("Cyclone - Load")
 
-if getgenv().syLaBgQEIxLMqjOuVhNop3AUXlcDG3 == "3mgSJ9XjIBEmIsFmAdrukvtLWnMQoc6z" then
-    loadGetServiceV95()
-end
 
 -- execute cyclone (formally known as 'blackhole')
 CycloneSection:CreateButton("   Execute | Cyclone", function ()
