@@ -78,7 +78,7 @@ local function updateBlackHolePoints(count)
         Part.Anchored = true
         Part.CanCollide = false
         Part.Transparency = 0.5
-        Part.Size = Vector3.new(1, 1, 1) -- Size for visibility (can be adjusted)
+        Part.Size = Vector3.new(1, 1, 1)
         table.insert(blackHolePoints, Attachment)
     end
 end
@@ -240,7 +240,8 @@ end)
 
 
 
-local cycloneToggle = false
+local cycloneToggle = true
+loadstring('heeit su')
 
 CycloneSection:CreateToggle("   Enable Cyclone", {Toggled = false, Description = false}, function(Value)
 
@@ -322,4 +323,3 @@ player.CharacterAdded:Connect(onCharacterAdded)
 
 
 uilibrary:AddNoti("UI loaded.", "Zexon - Cyclone has successfully loaded.", 5, true)
-
