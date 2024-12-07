@@ -4,6 +4,8 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+
 local angle = 1
 local radius = 1
 local angleSpeed = 1
@@ -14,10 +16,36 @@ local humanoidRootPart, Attachment1
 local nodeStrength = 25000
 local nodeSpeed = 2500
 
+local settingsFile = "zexon-settings.json"
+local defaultSettings = {
+    nodeResponse = 2500,
+    nodeTorque = 25000,
+    speed = 10,
+    range = 10,
+    nodes = 1
+}
+
+local settings = {}
+
+
+local function saveSettings()
+    local json = HttpService:JSONEncode(settings)
+    writefile(settingsFile, json)
+end
+
+local function loadSettings()
+    if isfile(settingsFile) then
+        local json = readfile(settingsFile)
+        settings = HttpService:JSONDecode(json)
+    else
+        settings = defaultSettings
+        saveSettings()
+    end
+end
+
+
+
 local targetPlayer = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or nil
-
-
-
 
 if not getgenv().Network then
     getgenv().Network = {
@@ -50,11 +78,19 @@ end
 
 local function setupPlayer()
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then
+        return nil, nil, nil
+    end
 
-    local Folder = Instance.new("Folder", Workspace)
-    Folder.Name = "CycloneNodes"
+    -- Ensure CycloneNodes folder exists
+    local Folder = Workspace:FindFirstChild("CycloneNodes")
+    if not Folder then
+        Folder = Instance.new("Folder", Workspace)
+        Folder.Name = "CycloneNodes"
+    end
 
+    -- Create an attachment part (optional logic)
     local Part = Instance.new("Part", Folder)
     local Attachment = Instance.new("Attachment", Part)
     Part.Anchored = true
@@ -84,7 +120,6 @@ local function updateBlackHolePoints(count)
         table.insert(blackHolePoints, Attachment)
     end
 end
-
 
 local function ForcePart(v)
     if v:IsA("Part") and not v.Anchored and not v.Parent:FindFirstChild("Humanoid") and not v.Parent:FindFirstChild("Head") and v.Name ~= "Handle" then
@@ -174,6 +209,16 @@ local function toggleBlackHole()
     end
 end
 
+local function applySettings()
+    nodeSpeed = settings.nodeResponse
+    nodeStrength = settings.nodeTorque
+    angleSpeed = settings.speed
+    radius = settings.range
+    points = settings.nodes
+    settings.autosaveEnabled = settings.autosaveEnabled or false
+    settings.autosaveNotifications = settings.autosaveNotifications or false
+    updateBlackHolePoints(points)
+end
 
 LocalPlayer.CharacterAdded:Connect(function()
     humanoidRootPart, Attachment1 = setupPlayer()
@@ -181,72 +226,70 @@ end)
 
 humanoidRootPart, Attachment1, Folder = setupPlayer()
 updateBlackHolePoints(points)
+loadSettings()
+applySettings()
+
 blackHoleActive = false
+
+-- UI Library
 local uilibrary = loadstring(game:HttpGet("https://pastebin.com/raw/1Qg7Lmad"))()
 local windowz = uilibrary:CreateWindow("                                                              Zexon", "Script Menu", true)
 
+-- Pages and Sections
 local mainPage = windowz:CreatePage("Main - FE")
 local mainSection = mainPage:CreateSection("Main")
 
-
 mainSection:CreateButton("   Execute | Inf Yield", function ()
-   loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
+    loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
 end)
 
 mainSection:CreateSlider("   Change WalkSpeed", {Min = 16, Max = 150, DefaultValue = 16}, function(Value)
-        local speaker = game.Players.LocalPlayer
-        local Char = speaker.Character or workspace:FindFirstChild(speaker.Name)
-        local Human = Char and Char:FindFirstChildWhichIsA("Humanoid")
+    local speaker = game.Players.LocalPlayer
+    local Char = speaker.Character or workspace:FindFirstChild(speaker.Name)
+    local Human = Char and Char:FindFirstChildWhichIsA("Humanoid")
 
-        if Char and Human then
+    if Char and Human then
+        Human.WalkSpeed = Value
+    end
+
+    HumanModCons = HumanModCons or {}
+    HumanModCons.wsLoop = (HumanModCons.wsLoop and HumanModCons.wsLoop:Disconnect() and false) or Human:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+        if Human then
             Human.WalkSpeed = Value
         end
+    end)
 
-        HumanModCons = HumanModCons or {}
+    HumanModCons.wsCA = (HumanModCons.wsCA and HumanModCons.wsCA:Disconnect() and false) or speaker.CharacterAdded:Connect(function(nChar)
+        Char, Human = nChar, nChar:WaitForChild("Humanoid")
+        Human.WalkSpeed = Value
         HumanModCons.wsLoop = (HumanModCons.wsLoop and HumanModCons.wsLoop:Disconnect() and false) or Human:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
             if Human then
                 Human.WalkSpeed = Value
             end
         end)
-
-        HumanModCons.wsCA = (HumanModCons.wsCA and HumanModCons.wsCA:Disconnect() and false) or speaker.CharacterAdded:Connect(function(nChar)
-            Char, Human = nChar, nChar:WaitForChild("Humanoid")
-            Human.WalkSpeed = Value
-            HumanModCons.wsLoop = (HumanModCons.wsLoop and HumanModCons.wsLoop:Disconnect() and false) or Human:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-                if Human then
-                    Human.WalkSpeed = Value
-                end
-            end)
-        end)
+    end)
 end)
-
-
-
-
 
 local CyclonePage = windowz:CreatePage("Cyclone - FE")
 local CycloneSection = CyclonePage:CreateSection("Main - Settings")
 
-CycloneSection:CreateSlider("   Range        - Distance between the player", {Min = 1, Max = 100, DefaultValue = 10}, function(Value)
-    radius = Value
-end)
-
-CycloneSection:CreateSlider("   Speed        - Orbit speed", {Min = 1, Max = 100, DefaultValue = 10}, function(Value)
+CycloneSection:CreateSlider("   Speed        - Orbit speed", {Min = 1, Max = 100, DefaultValue = settings.speed}, function(Value)
+    settings.speed = Value
     angleSpeed = Value
 end)
 
-CycloneSection:CreateSlider("   Nodes        - Amount of cyclones", {Min = 1, Max = 10, DefaultValue = 1}, function(Value)
+CycloneSection:CreateSlider("   Range        - Distance between the player", {Min = 1, Max = 100, DefaultValue = settings.range}, function(Value)
+    settings.range = Value
+    radius = Value
+end)
+
+CycloneSection:CreateSlider("   Nodes        - Amount of cyclones", {Min = 1, Max = 10, DefaultValue = settings.nodes}, function(Value)
+    settings.nodes = Value
     points = Value
     updateBlackHolePoints(points)
 end)
 
-
-
-local cycloneToggle = true
-loadstring('heeit su')
-
 CycloneSection:CreateToggle("   Enable Cyclone", {Toggled = false, Description = false}, function(Value)
-
     if Value then
         toggleBlackHole()
         uilibrary:AddNoti("Cyclone Enabled", "If you die, this will automatically disable.", 10, true)
@@ -255,25 +298,17 @@ CycloneSection:CreateToggle("   Enable Cyclone", {Toggled = false, Description =
     end
 end)
 
-
-blackHoleActive = false
-
-
-function loadGetServiceV95()
-    local serviceV96 = windowz:CreatePage("ServiceTab - FE")
-    local serviceSectionV98 = serviceV96:CreateSection("Service - Settings")
-    serviceSectionV98:CreateButton("   Unpack | ServiceV6", function ()
-    loadstring(game:HttpGet('https://pastebin.com/raw/c3b0rWf1'))()
-    end)
-    serviceSectionV98:CreateButton("   Unpack | ServiceV15", function ()
-    loadstring(game:HttpGet('https://pastebin.com/raw/2Xk8Tm8r'))()
-    end)
-end
-if getgenv().syLaBgQEIxLMqjOuVhNop3AUXlcDG3 == "3mgSJ9XjIBEmIsFmAdrukvtLWnMQoc6z" then
-    loadGetServiceV95()
-end
-
 local CycloneMiscSection = CyclonePage:CreateSection("Misc - Settings")
+
+CycloneMiscSection:CreateSlider("   Node Response        - Reaction speed of nodes", {Min = 1, Max = 5000, DefaultValue = settings.nodeResponse}, function(Value)
+    settings.nodeResponse = Value
+    nodeSpeed = Value
+end)
+
+CycloneMiscSection:CreateSlider("   Node Torque              - Strength speed of nodes", {Min = 1, Max = 50000, DefaultValue = settings.nodeTorque}, function(Value)
+    settings.nodeTorque = Value
+    nodeStrength = Value
+end)
 
 local playerDropdown
 
@@ -296,32 +331,59 @@ playerDropdown = CycloneMiscSection:CreateDropdown("   Select Player", {
     local player = Players:FindFirstChild(selectedPlayerName)
     if player and player.Character then
         targetPlayer = player.Character:FindFirstChild("HumanoidRootPart")
-        uilibrary:AddNoti("Linked Cyclone", "Cyclone has been linked to the player.", 10, true)
     else
         targetPlayer = nil
     end
 end)
 
+
 Players.PlayerAdded:Connect(refreshPlayerDropdown)
 Players.PlayerRemoving:Connect(refreshPlayerDropdown)
-
 refreshPlayerDropdown()
-
-CycloneMiscSection:CreateSlider("   Node Response        - Reaction speed of nodes", {Min = 1, Max = 5000, DefaultValue = 2500}, function(Value)
-    nodeSpeed = Value
-end)
-CycloneMiscSection:CreateSlider("   Node Torque              - Strength speed of nodes", {Min = 1, Max = 50000, DefaultValue = 25000}, function(Value)
-    gravityStrength = Value
-end)
-
 
 local player = game.Players.LocalPlayer
 local function onCharacterAdded(character)
-    print("A new character has been added: " .. character.Name)
     uilibrary:AddNoti("Respawn Detected", "Cyclone reset to prevent issues. (Dropdown must be changed)", 15, true)
     blackHoleActive = false
 end
 player.CharacterAdded:Connect(onCharacterAdded)
 
 
-uilibrary:AddNoti("UI loaded.", "Zexon - Cyclone has successfully loaded.", 5, true)
+local settingsPage = windowz:CreatePage("Settings")
+local settingsSection = settingsPage:CreateSection("Zexon - Settings")
+
+
+
+settingsSection:CreateToggle("   Autosave Notifications", {Toggled = settings.autosaveNotifications, Description = "Toggle autosave notifications on/off"}, function(Value)
+    settings.autosaveNotifications = Value
+    autosaveNotifications = Value
+    saveSettings()
+
+end)
+
+settingsSection:CreateToggle("   Enable Autosave", {Toggled = settings.autosaveEnabled, Description = "Enable or disable autosaving configurations"}, function(Value)
+    settings.autosaveEnabled = Value 
+    saveSettings()
+
+end)
+
+
+
+spawn(function()
+    while true do
+        task.wait(15)
+        if settings.autosaveEnabled then
+            saveSettings()
+            if autosaveNotifications then
+                uilibrary:AddNoti("Settings Autosaved.", "Zexon has successfully autosaved your settings.", 5, true)
+            end
+        end
+        
+    end
+end)
+
+spawn(function()
+    task.wait(1)
+    uilibrary:AddNoti("UI loaded.", "Zexon has successfully loaded your settings.", 5, true)
+end)
+
