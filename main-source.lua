@@ -28,7 +28,6 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
-local Mouse = LocalPlayer:GetMouse()
 local RunService = game:GetService("RunService")
 
 
