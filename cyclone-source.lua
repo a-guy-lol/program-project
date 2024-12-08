@@ -719,7 +719,7 @@ local infoSection = infoPage:CreateSection("Zexon - Latest Update")
 infoSection:CreateParagraph("Zexon Release V1.2.4 - 2024 Dec 8", [[
    + Added Cyclone loader for seamless setup.
    + Cyclone now saves configs automatically.
-   + New Fling feature for players. 💀
+   + New Fling feature for players. (some logic to fling players better if they are moving.)
    + Anti-cheat callback added for safety.
    + New Releases, Custom Game, and settings tabs!.
    Note: Fixing Cyclone Playerlist dropdown bug soon. 🧐
@@ -750,7 +750,7 @@ local releaseV124 = releasePage:CreateSection("Zexon Release V1.2.4 - 2024 Dec 8
 releaseV124:CreateParagraph("Cyclone Updates", [[
    + Added Cyclone loader for seamless setup.
    + Cyclone now saves configs automatically.
-   + New Fling feature for players. 💀
+   + New Fling feature for players.  (some logic to fling players better if they are moving.)
    + Anti-cheat callback added for safety.
    + New Releases, Custom Game, and settings tabs!.
    Note: Fixing Cyclone Playerlist dropdown bug soon. 🧐
