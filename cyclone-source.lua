@@ -596,6 +596,45 @@ end
 player.CharacterAdded:Connect(onCharacterAdded)
 
 
+
+
+
+
+if placeId == 189707 then
+    local customGame = windowz:CreatePage("Game")
+    local customGameSection = customGame:CreateSection("Natural Disaster Survival")
+    
+    customGameSection:CreateButton("   Teleport | Lobby", function ()
+    local player = game.Players.LocalPlayer
+    local character = player.Character or player.CharacterAdded:Wait()
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if humanoidRootPart then
+        humanoidRootPart.CFrame = CFrame.new(-280, 179, 341)
+    end
+end)
+    customGameSection:CreateButton("   Teleport | Map", function ()
+    local player = game.Players.LocalPlayer
+    local character = player.Character or player.CharacterAdded:Wait()
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if humanoidRootPart then
+        humanoidRootPart.CFrame = CFrame.new(-117, 48, 7)
+    end
+end)
+else
+    local customGame = windowz:CreatePage("Game")
+    local customGameSection = customGame:CreateSection("Unknown Game")
+    customGameSection:CreateParagraph("Unsupported Game", [[
+   This custom game is unsupported. Custom games that we put here have their own exploits to teleport to locations or to do an automation.
+   We currently only support:
+   - Natural Disaster Survival
+   
+   More custom games will be added.
+]], 7)
+end
+
+
+
+
 local settingsPage = windowz:CreatePage("Settings")
 local settingsSection = settingsPage:CreateSection("Zexon - Settings")
 
@@ -682,7 +721,7 @@ infoSection:CreateParagraph("Zexon Release V1.2.4 - 2024 Dec 8", [[
    + Cyclone now saves configs automatically.
    + New Fling feature for players. 💀
    + Anti-cheat callback added for safety.
-   + New Releases and settings tabs!.
+   + New Releases, Custom Game, and settings tabs!.
    Note: Fixing Cyclone Playerlist dropdown bug soon. 🧐
 ]], 5)
 
@@ -713,7 +752,7 @@ releaseV124:CreateParagraph("Cyclone Updates", [[
    + Cyclone now saves configs automatically.
    + New Fling feature for players. 💀
    + Anti-cheat callback added for safety.
-   + New Releases and settings tabs!.
+   + New Releases, Custom Game, and settings tabs!.
    Note: Fixing Cyclone Playerlist dropdown bug soon. 🧐
 ]], 5)
 
