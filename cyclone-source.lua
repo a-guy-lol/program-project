@@ -684,7 +684,7 @@ infoSection:CreateParagraph("Zexon Release V1.2.4 - 2024 Dec 8", [[
    + Anti-cheat callback added for safety.
    + New Releases and settings tabs!.
    Note: Fixing Cyclone Playerlist dropdown bug soon. 🧐
-]], 3)
+]], 5)
 
 
 local releasePage = windowz:CreatePage("Releases")

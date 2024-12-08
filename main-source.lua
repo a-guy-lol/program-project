@@ -321,6 +321,9 @@ end
 local CyclonePage = windowz:CreatePage("Cyclone")
 local CycloneSection = CyclonePage:CreateSection("Cyclone - FE")
 
+CycloneSection:CreateParagraph("Why did seperate Cyclone?", [[
+   The main reason of seperating Cyclone from the Main script of Zexon was due to Cyclone being patched in some games. In these patched games your character would freeze, so we wanted to make the main script usable if Cyclone was patched.
+]], 5)
 
 -- execute cyclone (formally known as 'blackhole')
 CycloneSection:CreateButton("   Execute | Cyclone", function ()
@@ -380,7 +383,7 @@ infoSection:CreateParagraph("Zexon Release V1.2.4 - 2024 Dec 8", [[
    + Anti-cheat callback added for safety.
    + New Releases and settings tabs!.
    Note: Fixing Cyclone Playerlist dropdown bug soon. 🧐
-]], 3)
+]], 5)
 
 
 local releasePage = windowz:CreatePage("Releases")
