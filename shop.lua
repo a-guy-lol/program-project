@@ -53,6 +53,8 @@ Players.LocalPlayer.OnTeleport:Connect(function(State)
         print("[DEBUG] Conditions met. Setting TeleportCheck to true and queuing teleport.")
         TeleportCheck = true
         queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/shop.lua'))()")
+        script_key="VNpKkDavpOSXEntdFsXYRnMTaUQFEoaX";
+        loadstring(game:HttpGet('http://scripts.projectauto.xyz/AutoRobV4'))()
     else
         print("[DEBUG] Conditions not met. TeleportCheck: " .. tostring(TeleportCheck))
     end
