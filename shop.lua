@@ -6,7 +6,7 @@ local TeleportCheck = false
 local Players = game:GetService("Players")
 local KeepInfYield = true -- Ensure this variable is properly set as per your use case
 local queueteleport = syn and syn.queue_on_teleport or queue_on_teleport -- Adjust for your executor compatibility
-local timerDuration = 325 -- Timer duration in seconds
+local timerDuration = 250 -- Timer duration in seconds
 
 print("[DEBUG] Script initialized. TeleportCheck: false, KeepInfYield: " .. tostring(KeepInfYield))
 
