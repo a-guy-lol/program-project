@@ -776,21 +776,19 @@ end)
 
             local Elements = {}
 
-            function Elements:CreateButton(btitle, description, callback)
+            function Elements:CreateButton(btitle, callback)
                 btitle = btitle or "Button"
-                description = description or ""
                 callback = callback or function() end
-            
+
                 local Button = Instance.new("TextButton")
                 local ButtonCorner = Instance.new("UICorner")
-                local ButtonDesc = Instance.new("TextLabel")
-            
-                Button.Name = "Button" 
+
+                Button.Name = "Button"
                 Button.Parent = SectionFrame
                 Button.BackgroundColor3 = themes.Background
                 Objects[Button] = "Background"
                 Button.Position = UDim2.new(0.277777791, 0, 0.310000002, 0)
-                Button.Size = UDim2.new(0, 440, 0, description ~= "" and 49 or 34) -- Adjust height if description exists
+                Button.Size = UDim2.new(0, 440, 0, 34)
                 Button.ZIndex = 2
                 Button.Font = Enum.Font.SourceSansSemibold
                 Button.ClipsDescendants = true
@@ -802,39 +800,21 @@ end)
                 Button.TextWrapped = true
                 Button.TextXAlignment = Enum.TextXAlignment.Left
             
-                if description ~= "" then
-                    ButtonDesc = Instance.new("TextLabel")
-                    ButtonDesc.Name = "ButtonDesc"
-                    ButtonDesc.Parent = Button
-                    ButtonDesc.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-                    ButtonDesc.BackgroundTransparency = 1.000
-                    ButtonDesc.Position = UDim2.new(0.0129999332, 0, 0.612000108, 0)
-                    ButtonDesc.Size = UDim2.new(0, 390, 0, 19)
-                    ButtonDesc.ZIndex = 2
-                    ButtonDesc.Font = Enum.Font.SourceSansSemibold
-                    ButtonDesc.Text = description
-                    ButtonDesc.TextColor3 = themes.TextColor
-                    ButtonDesc.TextSize = 16.000
-                    ButtonDesc.TextTransparency = 0.500
-                    ButtonDesc.TextXAlignment = Enum.TextXAlignment.Left
-                    Objects[ButtonDesc] = "TextColor"
-                end
-            
                 ButtonCorner.CornerRadius = UDim.new(0, 4)
                 ButtonCorner.Name = "ButtonCorner"
                 ButtonCorner.Parent = Button
-            
+
                 coroutine.wrap(function()
                     while wait() do
                         Button.BackgroundColor3 = themes.Background
                         Button.TextColor3 = themes.TextColor
                     end
                 end)()
-            
+
                 Button.MouseButton1Click:Connect(function()
                     Utility:Pop(Button, 10)
                 end)
-            
+
                 Button.MouseButton1Click:Connect(function()
                     pcall(callback)
                 end)
