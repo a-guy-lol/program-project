@@ -778,17 +778,32 @@ end)
 
             function Elements:CreateButton(btitle, description, callback)
                 btitle = btitle or "Button"
-                description = description or false -- Default to false if not provided
+                description = description or ""
                 callback = callback or function() end
             
                 local Button = Instance.new("TextButton")
                 local ButtonCorner = Instance.new("UICorner")
-                local ButtonDesc = Instance.new("TextLabel") -- New description label
+                local ButtonDesc = Instance.new("TextLabel")
             
-                if description then
-                    -- Use larger size for button with description
-                    Button.Size = UDim2.new(0, 440, 0, 49)
-                    
+                Button.Name = "Button" 
+                Button.Parent = SectionFrame
+                Button.BackgroundColor3 = themes.Background
+                Objects[Button] = "Background"
+                Button.Position = UDim2.new(0.277777791, 0, 0.310000002, 0)
+                Button.Size = UDim2.new(0, 440, 0, description ~= "" and 49 or 34) -- Adjust height if description exists
+                Button.ZIndex = 2
+                Button.Font = Enum.Font.SourceSansSemibold
+                Button.ClipsDescendants = true
+                Button.Text = " " .. btitle
+                Button.AutoButtonColor = false
+                Button.TextColor3 = themes.TextColor
+                Objects[Button] = "TextColor"
+                Button.TextSize = 22.000
+                Button.TextWrapped = true
+                Button.TextXAlignment = Enum.TextXAlignment.Left
+            
+                if description ~= "" then
+                    ButtonDesc = Instance.new("TextLabel")
                     ButtonDesc.Name = "ButtonDesc"
                     ButtonDesc.Parent = Button
                     ButtonDesc.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
@@ -802,42 +817,24 @@ end)
                     ButtonDesc.TextSize = 16.000
                     ButtonDesc.TextTransparency = 0.500
                     ButtonDesc.TextXAlignment = Enum.TextXAlignment.Left
-                else
-                    Button.Size = UDim2.new(0, 440, 0, 34)
+                    Objects[ButtonDesc] = "TextColor"
                 end
-            
-                Button.Name = "Button"
-                Button.Parent = SectionFrame
-                Button.BackgroundColor3 = themes.Background
-                Objects[Button] = "Background"
-                Button.Position = UDim2.new(0.277777791, 0, 0.310000002, 0)
-                Button.Size = UDim2.new(0, 440, 0, 34)
-                Button.ZIndex = 2
-                Button.Font = Enum.Font.SourceSansSemibold
-                Button.ClipsDescendants = true
-                Button.Text = " " .. btitle
-                Button.AutoButtonColor = false
-                Button.TextColor3 = themes.TextColor
-                Objects[Button] = "TextColor"
-                Button.TextSize = 22.000
-                Button.TextWrapped = true
-                Button.TextXAlignment = Enum.TextXAlignment.Left
             
                 ButtonCorner.CornerRadius = UDim.new(0, 4)
                 ButtonCorner.Name = "ButtonCorner"
                 ButtonCorner.Parent = Button
-
+            
                 coroutine.wrap(function()
                     while wait() do
                         Button.BackgroundColor3 = themes.Background
                         Button.TextColor3 = themes.TextColor
                     end
                 end)()
-
+            
                 Button.MouseButton1Click:Connect(function()
                     Utility:Pop(Button, 10)
                 end)
-
+            
                 Button.MouseButton1Click:Connect(function()
                     pcall(callback)
                 end)
@@ -1389,41 +1386,16 @@ end
                 return DropElements
             end -- Final
 
-            function Elements:CreateSlider(slidertitle, description, setting, callback)
+            function Elements:CreateSlider(slidertitle, setting, callback)
                 slidertitle = slidertitle or "Slider"
-                description = description or false
                 callback = callback or function() end
-            
-                local Slider = Instance.new("Frame")
-                local SliderDesc = Instance.new("TextLabel") -- New description label
-            
-                if description then
-                    -- Use larger size for slider with description  
-                    Slider.Size = UDim2.new(0, 440, 0, 64)
-            
-                    SliderDesc.Name = "SliderDesc"
-                    SliderDesc.Parent = Slider
-                    SliderDesc.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-                    SliderDesc.BackgroundTransparency = 1.000
-                    SliderDesc.Position = UDim2.new(0.0129999332, 0, 0.812000108, 0)
-                    SliderDesc.Size = UDim2.new(0, 390, 0, 19)
-                    SliderDesc.ZIndex = 2
-                    SliderDesc.Font = Enum.Font.SourceSansSemibold
-                    SliderDesc.Text = description
-                    SliderDesc.TextColor3 = themes.TextColor
-                    SliderDesc.TextSize = 16.000
-                    SliderDesc.TextTransparency = 0.500
-                    SliderDesc.TextXAlignment = Enum.TextXAlignment.Left
-                else
-                    Slider.Size = UDim2.new(0, 440, 0, 49)
-                end
-            
                 local Max_Value = setting.Max or 100
                 local Min_Value = setting.Min or 0
                 local DefaultValue = setting.DefaultValue or 0
 
                 local dragging = false
 
+                local Slider = Instance.new("Frame")
                 local SliderButton = Instance.new("Frame")
                 local SliderPercent = Instance.new("Frame")
                 local SliderPercentCorner = Instance.new("UICorner")
