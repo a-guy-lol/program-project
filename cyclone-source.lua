@@ -712,11 +712,9 @@ CycloneSection:CreateToggle("   Enable Cyclone", {Toggled = false, Description =
         toggleBlackHole() -- Enable the Cyclone
         updateSeats(false) -- Disable CanTouch for all seats
         monitorNewSeats() -- Monitor for newly added seats
-        uilibrary:AddNoti("Cyclone Enabled", "All seats are now untouchable. Cyclone active.", 10, true)
     else
         blackHoleActive = false -- Mark Cyclone as inactive
         updateSeats(true) -- Re-enable CanTouch for all seats
-        uilibrary:AddNoti("Cyclone Disabled", "Seats are now touchable again.", 10, true)
     end
 end)
 
