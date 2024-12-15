@@ -156,7 +156,7 @@ applySettings()
 -- #########################################################
 -- ######################## UI Setup #######################
 -- #########################################################
-local uilibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonUI.lua"))()
+local uilibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/zexonUI.lua"))()
 local windowz = uilibrary:CreateWindow("                                                              Zexon V1.3", "(Zyron)", true)
 
 
@@ -448,7 +448,7 @@ CycloneSection:CreateButton("   Execute | Cyclone", function ()
         coreGui:FindFirstChild("ZexonUI"):Destroy()
     end
     loadstring(game:HttpGet('https://pastebin.com/raw/HYuVwnZK'))()
-    loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/cyclone-source.lua'))()
+    loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/cyclone-source.lua'))()
  end)
 
 
@@ -459,10 +459,10 @@ CycloneSection:CreateButton("   Execute | Cyclone", function ()
 -- #########################################################
 -- ################# Custom Game Logic #####################
 -- #########################################################
-if placeId == 189707 then
-    -- Natural Disaster Survival loadstring
+if placeId == 189707 then 
+    loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/CustomGames/zexonNDS.lua'))()
     elseif placeID == 142823291 then
-        -- Murder mystery loadstring
+        loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/CustomGames/zexonMM2.lua'))()
     else
         local customGame = windowz:CreatePage("Game")
         local customGameSection = customGame:CreateSection("Unknown Game")

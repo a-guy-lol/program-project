@@ -337,7 +337,7 @@ end
 -- #########################################################
 -- ######################## UI Setup #######################
 -- #########################################################
-local uilibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonUI.lua"))()
+local uilibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/zexonUI.lua"))()
 local windowz = uilibrary:CreateWindow("                                                              Zexon V1.3", "(Zyron)", true)
 
 
@@ -797,23 +797,22 @@ end)
 -- #########################################################
 -- ################# Custom Game Logic #####################
 -- #########################################################
-if placeId == 189707 then
--- Natural Disaster Survival loadstring
-elseif placeID == 142823291 then
-    -- Murder mystery loadstring
-else
-    local customGame = windowz:CreatePage("Game")
-    local customGameSection = customGame:CreateSection("Unknown Game")
-    customGameSection:CreateParagraph("Unsupported Game", [[
-   This custom game is unsupported. Custom games that we put here have their own exploits to teleport to locations or to do an automation.
-   We currently only support:
-   - Natural Disaster Survival
-   - Murder Mystery 2
-   
-   More custom games will be added.
-]], 7)
-end
-
+if placeId == 189707 then 
+    loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/CustomGames/zexonNDS.lua'))()
+    elseif placeID == 142823291 then
+        loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/CustomGames/zexonMM2.lua'))()
+    else
+        local customGame = windowz:CreatePage("Game")
+        local customGameSection = customGame:CreateSection("Unknown Game")
+        customGameSection:CreateParagraph("Unsupported Game", [[
+       This custom game is unsupported. Custom games that we put here have their own exploits to teleport to locations or to do an automation.
+       We currently only support:
+       - Natural Disaster Survival
+       - Murder Mystery 2
+       
+       More custom games will be added.
+    ]], 7)
+    end
 
 
 
