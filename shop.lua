@@ -70,7 +70,7 @@ local function serverHopAndTeleport()
     if KeepInfYield and (not TeleportCheck) and queueteleport then
         print("[DEBUG] Conditions met. Setting TeleportCheck to true and queuing teleport.")
         TeleportCheck = true
-        queueteleport("loadstring(game:HttpGet('http://scripts.projectauto.xyz/AutoRobV5'))()
+        queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/shop.lua'))()
 ")
     else
         print("[DEBUG] Conditions not met. TeleportCheck: " .. tostring(TeleportCheck))
