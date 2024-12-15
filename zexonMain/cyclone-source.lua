@@ -1,3 +1,4 @@
+
 -- #########################################################
 -- ##################### Blacklist Service #################
 -- #########################################################
@@ -13,7 +14,6 @@ local blacklistedGames = {
     [185655149] = "Bloxburg blocks external scripts",
     [10228136016] = "Fallen Survival has protection"
 }
-
 -- #########################################################
 -- ##################### Safety Checks ####################
 -- #########################################################
@@ -59,25 +59,6 @@ if blacklistedGames[placeId] then
     while true do task.wait() end
 end
 
--- #########################################################
--- ##################### Load Main Script ################
--- #########################################################
-log("loading main script...")
-
-local success, content = pcall(function()
-    return game:HttpGet('https://pastebin.com/raw/XQp2bfhe')
-end)
-
-if not success then
-    log("couldn't load script :( error: " .. tostring(content))
-    return
-end
-
-local ok, err = pcall(loadstring(content))
-if not ok then
-    log("script failed to start: " .. tostring(err))
-    return
-end
 
 
 -- #########################################################
@@ -90,68 +71,268 @@ local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 -- #########################################################
 -- ################# Global Variables ######################
 -- #########################################################
-local walkspeedValue = 16
+
+local angle = 1
+local radius = 1
+local angleSpeed = 1
+local points = 1
+local offsetX = 0
+local offsetY = 0
+local offsetZ = 0
+local yOffset = 0 
+local blackHoleActive = false
+local blackHolePoints = {}
+local humanoidRootPart, Attachment1
+local nodeStrength = 500
+local nodeSpeed = 500
+local carVolecity = 50
+local carTorque = 50
+local targetPlayer = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or nil
 
 -- #########################################################
 -- #################### Utility Functions ##################
 -- #########################################################
-local settingsFile = "zexon-main-config.json"
+local settingsFile = "zexon-cyclone-config.json"
 local defaultSettings = {
-    walkspeed = 16,
-    autosaveEnabled = false,
-    autosaveNotifications = false
+    nodeResponse = 100,
+    nodeTorque = 100,
+    speed = 10,
+    range = 10,
+    nodes = 1,
 }
-
--- Improved load function
+local settings = {}
+local function saveSettings()
+    local json = HttpService:JSONEncode(settings)
+    writefile(settingsFile, json)
+end
 local function loadSettings()
-    local success, result = pcall(function()
-        if isfile(settingsFile) then
-            local json = readfile(settingsFile)
-            local decoded = HttpService:JSONDecode(json)
-            -- Merge with defaults to ensure all fields exist
-            for key, value in pairs(defaultSettings) do
-                if decoded[key] == nil then
-                    decoded[key] = value
+    if isfile(settingsFile) then
+        local json = readfile(settingsFile)
+        settings = HttpService:JSONDecode(json)
+    else
+        settings = defaultSettings
+        saveSettings()
+    end
+end
+-- #########################################################
+-- ###################### Core Features ####################
+-- #########################################################
+
+
+if not getgenv().Network then
+    getgenv().Network = {
+        BaseParts = {},
+        Velocity = Vector3.new(14.46262424, 14.46262424, 14.46262424)
+    }
+    Network.RetainPart = function(part)
+        if typeof(part) == "Instance" and part:IsA("BasePart") and part:IsDescendantOf(Workspace) then
+            table.insert(Network.BaseParts, part)
+            part.CustomPhysicalProperties = PhysicalProperties.new(0.001, 0, 0, 0, 0)
+            part.CanCollide = false
+        end
+    end
+    local function EnablePartControl()
+        LocalPlayer.ReplicationFocus = Workspace
+        RunService.Heartbeat:Connect(function()
+            sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+            for _, part in pairs(Network.BaseParts) do
+                if part:IsDescendantOf(Workspace) then
+                    part.Velocity = Network.Velocity
                 end
             end
-            return decoded
-        end
-        return defaultSettings
-    end)
-    
-    if success then
-        settings = result
-    else
-        warn("[Zexon] Settings load error:", result)
-        settings = defaultSettings
+        end)
     end
-    return settings
+    EnablePartControl()
 end
+local function setupPlayer()
+    local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    targetPlayer = humanoidRootPart
 
--- Improved save function
-local function saveSettings()
-    local success, result = pcall(function()
-        local json = HttpService:JSONEncode(settings)
-        writefile(settingsFile, json)
-    end)
-    
-    if not success then
-        warn("[Zexon] Settings save error:", result)
+    local Folder = Workspace:FindFirstChild("CycloneNodes")
+    if not Folder then
+        Folder = Instance.new("Folder", Workspace)
+        Folder.Name = "CycloneNodes"
+    end
+    local Part = Instance.new("Part", Folder)
+    local Attachment = Instance.new("Attachment", Part)
+    Part.Anchored = true
+    Part.CanCollide = false
+    Part.Transparency = 0
+    Part.Size = Vector3.new(1, 1, 1)
+    return humanoidRootPart, Attachment, Folder
+end
+local function updateBlackHolePoints(count)
+    for _, part in pairs(blackHolePoints) do
+        if part.Parent then
+            part.Parent:Destroy()
+        end
+    end
+    blackHolePoints = {}
+    for i = 1, count do
+        local Part = Instance.new("Part", Workspace.CycloneNodes)
+        local Attachment = Instance.new("Attachment", Part)
+        Part.Anchored = true
+        Part.CanCollide = false
+        Part.Transparency = 0.5
+        Part.Size = Vector3.new(1, 1, 1)
+        table.insert(blackHolePoints, Attachment)
+    end
+end
+local function ForcePart(v)
+    if v:IsA("Part") and not v.Anchored and not v.Parent:FindFirstChild("Humanoid") and not v.Parent:FindFirstChild("Head") and v.Name ~= "Handle" then
+        for _, x in next, v:GetChildren() do
+            if x:IsA("BodyAngularVelocity") or x:IsA("BodyForce") or x:IsA("BodyGyro") or x:IsA("BodyPosition") or x:IsA("BodyThrust") or x:IsA("BodyVelocity") or x:IsA("RocketPropulsion") then
+                x:Destroy()
+            end
+        end
+        if v:FindFirstChild("Attachment") then
+            v:FindFirstChild("Attachment"):Destroy()
+        end
+        if v:FindFirstChild("AlignPosition") then
+            v:FindFirstChild("AlignPosition"):Destroy()
+        end
+        if v:FindFirstChild("Torque") then
+            v:FindFirstChild("Torque"):Destroy()
+        end
+        v.CanCollide = false
+
+        Network.RetainPart(v)
+        local Torque = Instance.new("Torque", v)
+        Torque.Torque = Vector3.new(nodeStrength, nodeStrength, nodeStrength)
+        local AlignPosition = Instance.new("AlignPosition", v)
+        local Attachment2 = Instance.new("Attachment", v)
+        Torque.Attachment0 = Attachment2
+        AlignPosition.MaxForce = math.huge
+        AlignPosition.MaxVelocity = math.huge
+        AlignPosition.Responsiveness = nodeSpeed
+        AlignPosition.Attachment0 = Attachment2
+
+        if #blackHolePoints > 0 then
+            local pointIndex = math.random(1, #blackHolePoints)
+            AlignPosition.Attachment1 = blackHolePoints[pointIndex]
+        end
+    end
+end
+local function toggleBlackHole()
+    blackHoleActive = not blackHoleActive
+    if blackHoleActive then
+        for _, v in next, Workspace:GetDescendants() do
+            ForcePart(v)
+        end
+
+        Workspace.DescendantAdded:Connect(function(v)
+            if blackHoleActive then
+                ForcePart(v)
+            end
+        end)
+        spawn(function()
+            while blackHoleActive and RunService.RenderStepped:Wait() do
+                angle = angle + math.rad(angleSpeed)
+                local targetCFrame = (targetPlayer and targetPlayer.CFrame) or humanoidRootPart.CFrame
+        
+                for i, attachment in pairs(blackHolePoints) do
+                    local angleOffset = (math.pi * 2 / #blackHolePoints) * (i - 1)
+                    local baseX = math.cos(angle + angleOffset) * radius
+                    local baseZ = math.sin(angle + angleOffset) * radius
+                    attachment.WorldCFrame = targetCFrame * CFrame.new(
+    baseX + offsetX,
+    offsetY,
+    baseZ + offsetZ
+)
+                end
+            end
+        end)
+    else
+        for _, part in pairs(Network.BaseParts) do
+            if part:IsDescendantOf(Workspace) then
+                part.CustomPhysicalProperties = nil
+                part.CanCollide = true
+                part.Velocity = Vector3.new(0, 0, 0)
+                part.RotVelocity = Vector3.new(0, 0, 0)
+
+                for _, child in pairs(part:GetChildren()) do
+                    if child:IsA("Attachment") or child:IsA("AlignPosition") or child:IsA("Torque") then
+                        child:Destroy()
+                    end
+                end
+                part.Position = Vector3.new(0, -1000, 0)
+            end
+        end
+        Network.BaseParts = {}
+        for _, attachment in pairs(blackHolePoints) do
+            attachment.WorldCFrame = CFrame.new(0, -1000, 0)
+        end
     end
 end
 
 local function applySettings()
-    walkspeedValue = settings.walkspeed
+    nodeSpeed = settings.nodeResponse
+    nodeStrength = settings.nodeTorque
+    angleSpeed = settings.speed
+    radius = settings.range
+    points = settings.nodes
     settings.autosaveEnabled = settings.autosaveEnabled or false
     settings.autosaveNotifications = settings.autosaveNotifications or false
+    updateBlackHolePoints(points)
 end
 
--- Load settings on startup
+LocalPlayer.CharacterAdded:Connect(function()
+    humanoidRootPart, Attachment1 = setupPlayer()
+end)
+humanoidRootPart, Attachment1, Folder = setupPlayer()
+updateBlackHolePoints(points)
 loadSettings()
 applySettings()
+blackHoleActive = false
+
+local randomOffsetActive = false
+local originalValues = {X = offsetX, Y = offsetY, Z = offsetZ, Range = radius} -- Save original values
+local randomOffsetLoop = nil
+
+local function toggleRandomOffsetAndRange(state)
+    randomOffsetActive = state
+    if randomOffsetLoop then
+        randomOffsetLoop:Disconnect()
+        randomOffsetLoop = nil
+    end
+
+    if randomOffsetActive then
+        randomOffsetLoop = RunService.Heartbeat:Connect(function()
+            offsetX = math.random(-50, 50)
+            offsetY = math.random(-50, 50)
+            offsetZ = math.random(-50, 50)
+            radius = math.random(1, 100)
+        end)
+    else
+        offsetX = originalValues.X
+        offsetY = originalValues.Y
+        offsetZ = originalValues.Z
+        radius = originalValues.Range
+    end
+end
+
+local function updateSeats(canTouchState)
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Seat") or obj:IsA("VehicleSeat") then
+            obj.CanTouch = canTouchState
+        end
+    end
+end
+
+local function monitorNewSeats()
+    -- Monitor newly added seats
+    Workspace.DescendantAdded:Connect(function(obj)
+        if blackHoleActive and (obj:IsA("Seat") or obj:IsA("VehicleSeat")) then
+            obj.CanTouch = false
+        end
+    end)
+end
 
 -- #########################################################
 -- ######################## UI Setup #######################
@@ -193,18 +374,15 @@ infoSection:CreateParagraph("welcome to zexon!", [[how's it going!
 ]], 22)
 
 local infoSection = infoPage:CreateSection("Zexon - Latest Update")
-infoSection:CreateParagraph("Zexon Release V1.3 - 2024 Dec 14", [[
+infoSection:CreateParagraph("Zexon Release V1.3.1 - 2024 Dec 15", [[
+   + Expanded Blacklist Service with detailed safety messages.
    + Added "Fallen Survival" to the blacklist.
    + Fixed ZexonUI's errors (sometimes pages wouldn't load) 
-   + Zexon Cyclone Updates
-        - Added collapse button to drop Cyclone Parts
-        - New seats noclip for Cyclone to reduce getting flung
-        - New X,Y,Z configs
-        - Added Crazy Mode toggle for fun
-        - Updated player dropdown and FINALLY FIXED THIS..
+   + Added Terminate button for ease of use.
+   + Updated player dropdown and FINALLY FIXED THIS..
    + Adjusted fling logic for better consistency.
    Note: Cyclone will be disregarded for some time due to lack of development time. This update took quite a bit cause I wanted to fix all of the current ongoing issuses. It involved a lot of testing but I concluded it and the script is more stable.
-]], 12)
+]], 10)
 infoSection:CreateButton("   Teleport | secret 🤫", function ()
     local player = game.Players.LocalPlayer
     local character = player.Character or player.CharacterAdded:Wait()
@@ -213,6 +391,9 @@ infoSection:CreateButton("   Teleport | secret 🤫", function ()
         humanoidRootPart.CFrame = CFrame.new(3397, 1358.871, -125)
     end
 end)
+
+
+
 
 
 
@@ -227,21 +408,34 @@ local mainSection = mainPage:CreateSection("Main - FE")
 mainSection:CreateButton("   Execute | Inf Yield", function ()
    loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
 end)
-mainSection:CreateSlider("   Change WalkSpeed", {Min = 16, Max = 150, DefaultValue = settings.walkspeed}, function(Value)
-    local speaker = game.Players.LocalPlayer
-    local Char = speaker.Character or workspace:FindFirstChild(speaker.Name)
-    local Human = Char and Char:FindFirstChildWhichIsA("Humanoid")
+mainSection:CreateSlider("   Change WalkSpeed", {Min = 16, Max = 150, DefaultValue = 16}, function(Value)
+        local speaker = game.Players.LocalPlayer
+        local Char = speaker.Character or workspace:FindFirstChild(speaker.Name)
+        local Human = Char and Char:FindFirstChildWhichIsA("Humanoid")
 
-    if Char and Human then
-        Human.WalkSpeed = Value
-    end
-    
-    -- Update settings immediately
-    settings.walkspeed = Value
-    saveSettings()
-    
-    -- Rest of your existing walkspeed code...
+        if Char and Human then
+            Human.WalkSpeed = Value
+        end
+        HumanModCons = HumanModCons or {}
+        HumanModCons.wsLoop = (HumanModCons.wsLoop and HumanModCons.wsLoop:Disconnect() and false) or Human:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+            if Human then
+                Human.WalkSpeed = Value
+            end
+        end)
+        HumanModCons.wsCA = (HumanModCons.wsCA and HumanModCons.wsCA:Disconnect() and false) or speaker.CharacterAdded:Connect(function(nChar)
+            Char, Human = nChar, nChar:WaitForChild("Humanoid")
+            Human.WalkSpeed = Value
+            HumanModCons.wsLoop = (HumanModCons.wsLoop and HumanModCons.wsLoop:Disconnect() and false) or Human:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+                if Human then
+                    Human.WalkSpeed = Value
+                end
+            end)
+        end)
 end)
+
+
+
+
 
 
 
@@ -314,7 +508,7 @@ local function SkidFling(TargetPlayer)
     local TargetStartPos = TRootPart.Position
     
     local StartTime = tick()
-    local MaxFlingTime = 7.5
+    local MaxFlingTime = 9.25
 
     local FPos = function(BasePart, Pos, Ang)
         RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
@@ -436,49 +630,177 @@ end
 -- #########################################################
 -- ######################## Cyclone #######################
 -- #########################################################
-
 local CyclonePage = windowz:CreatePage("Cyclone")
-local CycloneSection = CyclonePage:CreateSection("Cyclone - FE")
-CycloneSection:CreateParagraph("Why did we seperate Cyclone?", [[
-   The main reason of seperating Cyclone from the Main script of Zexon was due to Cyclone being patched in some games. In these patched games your character would freeze, so we wanted to make the main script usable if Cyclone was patched.
-]], 5)
-CycloneSection:CreateButton("   Execute | Cyclone", function ()
-    local coreGui = game:GetService("CoreGui")
-    if coreGui:FindFirstChild("ZexonUI") then
-        coreGui:FindFirstChild("ZexonUI"):Destroy()
+local CycloneSection = CyclonePage:CreateSection("Cyclone - Settings")
+CycloneSection:CreateSlider("   Speed        - Orbit speed", {Min = 1, Max = 50, DefaultValue = settings.speed}, function(Value)
+    settings.speed = Value
+    angleSpeed = Value
+end)
+CycloneSection:CreateSlider("   Range        - Distance between the player", {Min = 1, Max = 125, DefaultValue = settings.range}, function(Value)
+    if not randomOffsetActive then
+        settings.range = Value
+        radius = Value
     end
-    loadstring(game:HttpGet('https://pastebin.com/raw/HYuVwnZK'))()
-    loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/cyclone-source.lua'))()
- end)
+end)
+CycloneSection:CreateSlider("   Nodes        - Amount of cyclones", {Min = 1, Max = 10, DefaultValue = settings.nodes}, function(Value)
+    settings.nodes = Value
+    points = Value
+    updateBlackHolePoints(points)
+end)
+local playerDropdown
+
+local function refreshPlayerDropdown()
+    local playerNames = {}
+    for _, player in pairs(Players:GetPlayers()) do
+        table.insert(playerNames, player.Name)
+    end
+
+    if playerDropdown then
+        playerDropdown:Clear()
+        playerDropdown:Add(playerNames)
+    end
+end
+
+local selectedPlayerName = nil
+local targetPlayer = nil
+
+local function updateTargetPlayer()
+    if selectedPlayerName then
+        local player = Players:FindFirstChild(selectedPlayerName)
+        if player and player.Character then
+            targetPlayer = player.Character:FindFirstChild("HumanoidRootPart")
+            print("Updated targetPlayer to:", targetPlayer)
+        else
+            targetPlayer = nil
+            print("Player or HumanoidRootPart not found")
+        end
+    else
+        targetPlayer = nil
+    end
+end
+playerDropdown = CycloneSection:CreateDropdown("   Select Player", {
+    List = {},
+    Default = LocalPlayer.Name 
+}, function(selectedName)
+    selectedPlayerName = selectedName
+    if selectedName == LocalPlayer.Name then
+        targetPlayer = humanoidRootPart
+    else
+        local player = Players:FindFirstChild(selectedName)
+        if player and player.Character then
+            targetPlayer = player.Character:FindFirstChild("HumanoidRootPart")
+        else
+            targetPlayer = nil
+        end
+    end
+end)
+Players.PlayerAdded:Connect(refreshPlayerDropdown)
+Players.PlayerRemoving:Connect(refreshPlayerDropdown)
+spawn(function()
+    while true do
+        wait(1.5)
+        if not humanoidRootPart or not humanoidRootPart:IsDescendantOf(Workspace) then
+            if LocalPlayer.Character then
+                wait(5)
+                humanoidRootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                targetPlayer = humanoidRootPart
+            end
+        end
+    end
+end)
+
+CycloneSection:CreateToggle("   Enable Cyclone", {Toggled = false, Description = false}, function(Value)
+    if Value then
+        toggleBlackHole() -- Enable the Cyclone
+        updateSeats(false) -- Disable CanTouch for all seats
+        monitorNewSeats() -- Monitor for newly added seats
+    else
+        blackHoleActive = false -- Mark Cyclone as inactive
+        updateSeats(true) -- Re-enable CanTouch for all seats
+    end
+end)
+
+local CycloneAdvancedSection = CyclonePage:CreateSection("Advanced - Settings")
+CycloneAdvancedSection:CreateParagraph("Warning", [[
+            These are more experimental features that you can change.
+                                 Be careful with what you change. 
+                          (Typically Node Response is best on max.)
+]], 3)
 
 
 
+refreshPlayerDropdown()
+CycloneAdvancedSection:CreateToggle("   Crazy Mode", {Toggled = false, Description = "This makes your cyclone into a storm | actually is cool with 10 nodes lol"}, function(Value)
+    toggleRandomOffsetAndRange(Value)
+end)
+CycloneAdvancedSection:CreateButton("   Collapse Cyclone", function()
+    local function resetCyclone()
+        if typeof(getgenv().Network) == "table" then
+            if typeof(getgenv().Network.BaseParts) == "table" then
+                for _, part in pairs(getgenv().Network.BaseParts) do
+                    if part and part:IsA("BasePart") then
+                        pcall(function()
+                            -- Drop part by resetting its properties
+                            part.CustomPhysicalProperties = nil
+                            part.CanCollide = true
+                            part.Velocity = Vector3.zero
+                            part.RotVelocity = Vector3.zero
+                        end)
+                    end
+                end
+            end
+            getgenv().Network.BaseParts = {}
+        end
 
+        blackHoleActive = false
+        humanoidRootPart = nil
+        targetPlayer = nil
+
+        if Workspace:FindFirstChild("CycloneNodes") then
+            Workspace:FindFirstChild("CycloneNodes"):Destroy()
+        end
+
+        humanoidRootPart, Attachment1, Folder = setupPlayer()
+        updateBlackHolePoints(points)
+    end
+
+    local success, err = pcall(resetCyclone)
+    if not success then
+        warn("[zexon] Cyclone reset error:", err)
+    end
+end)
+CycloneAdvancedSection:CreateSlider("   Node Response        - Reaction speed of nodes", {Min = 100, Max = 1000, DefaultValue = settings.nodeResponse}, function(Value)
+    settings.nodeResponse = Value
+    nodeSpeed = Value
+end)
+
+
+CycloneAdvancedSection:CreateSlider("   Node Torque              - Strength speed of nodes", {Min = 100, Max = 1000, DefaultValue = settings.nodeTorque}, function(Value)
+    settings.nodeTorque = Value
+    nodeStrength = Value
+end)
+
+CycloneAdvancedSection:CreateSlider("   X Offset", {Min = -50, Max = 50, DefaultValue = 0}, function(Value)
+    offsetX = Value
+end)
+
+CycloneAdvancedSection:CreateSlider("   Y Offset", {Min = -50, Max = 50, DefaultValue = 0}, function(Value)
+    offsetY = Value
+    yOffset = Value -- Keep yOffset updated for compatibility
+end)
+
+CycloneAdvancedSection:CreateSlider("   Z Offset", {Min = -50, Max = 50, DefaultValue = 0}, function(Value)
+    offsetZ = Value
+end)
 
 
 -- #########################################################
 -- ################# Custom Game Logic #####################
 -- #########################################################
 if placeId == 189707 then
-    local customGame = windowz:CreatePage("Game")
-    local customGameSection = customGame:CreateSection("Natural Disaster Survival")
-    
-    customGameSection:CreateButton("   Teleport | Lobby", function ()
-    local player = game.Players.LocalPlayer
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if humanoidRootPart then
-        humanoidRootPart.CFrame = CFrame.new(-280, 179, 341)
-    end
-end)
-    customGameSection:CreateButton("   Teleport | Map", function ()
-    local player = game.Players.LocalPlayer
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if humanoidRootPart then
-        humanoidRootPart.CFrame = CFrame.new(-117, 48, 7)
-    end
-end)
+-- Natural Disaster Survival loadstring
+elseif placeID == 142823291 then
+    -- Murder mystery loadstring
 else
     local customGame = windowz:CreatePage("Game")
     local customGameSection = customGame:CreateSection("Unknown Game")
@@ -486,10 +808,18 @@ else
    This custom game is unsupported. Custom games that we put here have their own exploits to teleport to locations or to do an automation.
    We currently only support:
    - Natural Disaster Survival
+   - Murder Mystery 2
    
    More custom games will be added.
 ]], 7)
 end
+
+
+
+
+
+
+
 
 
 
@@ -528,18 +858,62 @@ settingsSection:CreateToggle("   Enable Autosave", {Toggled = settings.autosaveE
     settings.autosaveEnabled = Value 
     saveSettings()
 end)
-
 local settingsTerminateSection = settingsPage:CreateSection("Zexon - Terminate")
-settingsTerminateSection:CreateButton("Terminate | Zexon Script", function()
+settingsTerminateSection:CreateButton("   Terminate | Zexon Script", function()
     local function safeCleanup()
         local coreGui = game:GetService("CoreGui")
         if coreGui:FindFirstChild("ZexonUI") then
             coreGui:FindFirstChild("ZexonUI"):Destroy()
         end
+
+        local workspace = game:GetService("Workspace")
+        if workspace:FindFirstChild("CycloneNodes") then
+            workspace:FindFirstChild("CycloneNodes"):Destroy()
+        end
+        
+        if typeof(getgenv().Network) == "table" then
+            if typeof(getgenv().Network.BaseParts) == "table" then
+                for _, part in pairs(getgenv().Network.BaseParts) do
+                    if part and part:IsA("BasePart") then
+                        pcall(function()
+                            part.CustomPhysicalProperties = nil
+                            part.CanCollide = true
+                            part.Velocity = Vector3.zero
+                            part.RotVelocity = Vector3.zero
+                        end)
+                    end
+                end
+            end
+            getgenv().Network.BaseParts = {}
+        else
+            getgenv().Network = {BaseParts = {}, Velocity = Vector3.new(14.46262424, 14.46262424, 14.46262424)}
+        end
+
+        blackHoleActive = false
+        humanoidRootPart = nil
+        targetPlayer = nil
+
+        if typeof(getgenv().ActiveConnections) == "table" then
+            for _, conn in pairs(getgenv().ActiveConnections) do
+                if typeof(conn) == "RBXScriptConnection" then
+                    conn:Disconnect()
+                end
+            end
+            getgenv().ActiveConnections = {}
+        else
+            getgenv().ActiveConnections = {}
+        end
     end
-    safeCleanup()
-    print("[zexon] script has been terminated.")
+
+    local success, err = pcall(safeCleanup)
+    if not success then
+        warn("[zexon] Cleanup error:", err)
+    end
+    print("[zexon] Script has been terminated.")
 end)
+
+
+
 
 spawn(function()
     while true do
@@ -562,8 +936,6 @@ end)
 
 
 
-
-
 -- #########################################################
 -- ###################### Release Notes ####################
 -- #########################################################
@@ -574,7 +946,7 @@ local releasesSection = releasePage:CreateSection("Zexon - Releases")
 releasesSection:CreateParagraph("Devlogs", [[
    hey there. 
    Zexon consists of 2 developers. 
-   The identities of the developers will be kept private.
+   But if you really want to submit a bug then contact @meisguy on Discord.
    
    
    ~ Happy to say we fixed playerlist bugs.
@@ -585,8 +957,7 @@ releasesSection:CreateParagraph("Devlogs", [[
 
 
 
-
-local releaseV130 = releasePage:CreateSection("Zexon (Zyron) | Release V1.3 - 2024 Dec 14")
+local releaseV130 = releasePage:CreateSection("Zexon (Zyron) | Release V1.3 - 2024 Dec 9")
 releaseV130:CreateParagraph("New features and fixes", [[
    + Added "Fallen Survival" to the blacklist.
    + Fixed ZexonUI's errors (sometimes pages wouldn't load) 
