@@ -461,7 +461,7 @@ CycloneSection:CreateButton("   Execute | Cyclone", function ()
 -- #########################################################
 if placeId == 189707 then 
     loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/CustomGames/zexonNDS.lua'))()
-if placeID == 142823291 then
+elseif placeId == 142823291 then
         loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/CustomGames/zexonMM2.lua'))()
     else
         local customGame = windowz:CreatePage("Game")
