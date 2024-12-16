@@ -1,5 +1,6 @@
-
-local function killAllMurder()
+local customGame = windowz:CreatePage("Game")
+local customGameSection = customGame:CreateSection("Murder Mystery 2")
+    local function killAllMurder()
     local function findMurderer()
         return LocalPlayer
     end
@@ -34,7 +35,9 @@ local function killAllMurder()
     -- Trigger the stab action
     LocalPlayer.Character.Knife.Stab:FireServer(unpack(args))
     end
-
+    customGameSection:CreateButton("   Murder | Kill All | Keybind: Q", function()
+killAllMurder()
+end)
 
 local function shootMurderer()
         local LocalPlayer = game:GetService("Players").LocalPlayer
@@ -211,6 +214,9 @@ end
 -- Call the function to execute
 shootMurderer()
 end
+customGameSection:CreateButton("   Sheriff | Shoot Murder | Keybind: E", function()
+    shootMurderer()
+end)
 
 local sheriffKey = "e"
 local murderKey = "q"
@@ -303,8 +309,8 @@ local function UpdateRoles()
     else
     end
 end
-local customGame = windowz:CreatePage("Game")
-local customGameSection = customGame:CreateSection("Murder Mystery 2")
+
+-- > UI Integration < --
 customGameSection:CreateToggle("   Roles ESP", {Toggled = false, Description = "Toggle Roles ESP On/Off"}, function(Toggled)
     if Toggled then
         -- Enable Roles ESP
@@ -322,12 +328,3 @@ customGameSection:CreateToggle("   Roles ESP", {Toggled = false, Description = "
         RemoveHighlights()
     end
 end)
-
-customGameSection:CreateButton("   Murder | Kill All | Keybind: Q", function()
-    killAllMurder()
-    end)
-
-customGameSection:CreateButton("   Sheriff | Shoot Murder | Keybind: E", function()
-        shootMurderer()
-    end)
-    
