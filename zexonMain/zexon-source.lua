@@ -456,11 +456,30 @@ CycloneSection:CreateButton("   Execute | Cyclone", function ()
 
 
 
+
 -- #########################################################
 -- ################# Custom Game Logic #####################
 -- #########################################################
 if placeId == 189707 then 
-    loadstring(game:HttpGet('https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/CustomGames/zexonNDS.lua'))()
+    local customGame = windowz:CreatePage("Game")
+local customGameSection = customGame:CreateSection("Natural Disaster Survival")
+
+customGameSection:CreateButton("   Teleport | Lobby", function ()
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+if humanoidRootPart then
+    humanoidRootPart.CFrame = CFrame.new(-280, 179, 341)
+end
+end)
+customGameSection:CreateButton("   Teleport | Map", function ()
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+if humanoidRootPart then
+    humanoidRootPart.CFrame = CFrame.new(-117, 48, 7)
+end
+end)
 elseif placeId == 142823291 then
 function mm2Special()
     local customGame = windowz:CreatePage("Game")
