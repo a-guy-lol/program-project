@@ -98,20 +98,36 @@ local walkspeedValue = 16
 -- #########################################################
 -- #################### Utility Functions ##################
 -- #########################################################
-local settingsFile = "zexon-main-config.json"
+-- Add at the top with other globals
+local settings = nil
+local HttpService = game:GetService("HttpService")
+
 local defaultSettings = {
     walkspeed = 16,
     autosaveEnabled = false,
     autosaveNotifications = false
 }
 
--- Improved load function
+local settingsFolder = "zexon"
+local settingsFile = settingsFolder .. "/zexon-main.json"
+
+local function ensureFolder()
+    if not isfolder(settingsFolder) then
+        makefolder(settingsFolder)
+    end
+end
+
 local function loadSettings()
+    if not HttpService then
+        log("HttpService not available")
+        return defaultSettings
+    end
+
     local success, result = pcall(function()
+        ensureFolder()
         if isfile(settingsFile) then
             local json = readfile(settingsFile)
             local decoded = HttpService:JSONDecode(json)
-            -- Merge with defaults to ensure all fields exist
             for key, value in pairs(defaultSettings) do
                 if decoded[key] == nil then
                     decoded[key] = value
@@ -125,32 +141,43 @@ local function loadSettings()
     if success then
         settings = result
     else
-        warn("[Zexon] Settings load error:", result)
+        log("Settings load error: " .. tostring(result))
         settings = defaultSettings
     end
     return settings
 end
 
--- Improved save function
+local function applySettings()
+    if not settings then
+        settings = defaultSettings
+    end
+    
+    local character = LocalPlayer.Character
+    if character then
+        local humanoid = character:FindFirstChild("Humanoid")
+        if humanoid then
+            humanoid.WalkSpeed = settings.walkspeed
+        end
+    end
+end
+
+-- Update saveSettings
 local function saveSettings()
+    if not settings then return end
+    
     local success, result = pcall(function()
+        ensureFolder()
         local json = HttpService:JSONEncode(settings)
         writefile(settingsFile, json)
     end)
     
     if not success then
-        warn("[Zexon] Settings save error:", result)
+        log("Settings save error: " .. tostring(result))
     end
 end
 
-local function applySettings()
-    walkspeedValue = settings.walkspeed
-    settings.autosaveEnabled = settings.autosaveEnabled or false
-    settings.autosaveNotifications = settings.autosaveNotifications or false
-end
-
--- Load settings on startup
-loadSettings()
+-- Initialize
+settings = loadSettings()
 applySettings()
 
 -- #########################################################
@@ -193,26 +220,10 @@ infoSection:CreateParagraph("welcome to zexon!", [[how's it going!
 ]], 22)
 
 local infoSection = infoPage:CreateSection("Zexon - Latest Update")
-infoSection:CreateParagraph("Zexon Release V1.3 - 2024 Dec 14", [[
-   + Added "Fallen Survival" to the blacklist.
-   + Fixed ZexonUI's errors (sometimes pages wouldn't load) 
-   + Zexon Cyclone Updates
-        - Added collapse button to drop Cyclone Parts
-        - New seats noclip for Cyclone to reduce getting flung
-        - New X,Y,Z configs
-        - Added Crazy Mode toggle for fun
-        - Updated player dropdown and FINALLY FIXED THIS..
-   + Adjusted fling logic for better consistency.
-   Note: Cyclone will be disregarded for some time due to lack of development time. This update took quite a bit cause I wanted to fix all of the current ongoing issuses. It involved a lot of testing but I concluded it and the script is more stable.
-]], 14)
-infoSection:CreateButton("   Teleport | secret 🤫", function ()
-    local player = game.Players.LocalPlayer
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if humanoidRootPart then
-        humanoidRootPart.CFrame = CFrame.new(3397, 1358.871, -125)
-    end
-end)
+infoSection:CreateParagraph("Zexon Release V1.3.1 - 2024 Dec 21", [[
+   + Fixed Zexon Loadstring error
+]], 2)
+
 
 
 
@@ -766,7 +777,6 @@ function mm2Special()
         end
     end
     
-    -- Function to remove all highlights
     local function RemoveHighlights()
         for _, player in pairs(Players:GetChildren()) do
             if player.Character and player.Character:FindFirstChild("Highlight") then
@@ -793,8 +803,7 @@ function mm2Special()
         else
         end
     end
-    
-    -- > UI Integration < --
+
     customGameSection:CreateToggle("   Roles ESP", {Toggled = false, Description = "Toggle Roles ESP On/Off"}, function(Toggled)
         if Toggled then
             -- Enable Roles ESP
@@ -921,6 +930,11 @@ releasesSection:CreateParagraph("Devlogs", [[
 
 
 
+
+local releaseV131 = releasePage:CreateSection("Zexon (Zyron) | Release V1.3.1 - 2024 Dec 21")
+releaseV131:CreateParagraph("Zexon Fix", [[
+   + Fixed Zexon Loadstring error
+]], 2)
 
 local releaseV130 = releasePage:CreateSection("Zexon (Zyron) | Release V1.3 - 2024 Dec 14")
 releaseV130:CreateParagraph("New features and fixes", [[

@@ -96,26 +96,72 @@ local targetPlayer = LocalPlayer.Character and LocalPlayer.Character:FindFirstCh
 -- #########################################################
 -- #################### Utility Functions ##################
 -- #########################################################
-local settingsFile = "zexon-cyclone-config.json"
+local HttpService = game:GetService("HttpService")
+local settings = nil
+
 local defaultSettings = {
-    nodeResponse = 100,
-    nodeTorque = 100,
+    nodeResponse = 750,
+    nodeTorque = 750,
     speed = 10,
     range = 10,
     nodes = 1,
+    autosaveEnabled = true,
+    autosaveNotifications = true,
+    offsetX = 0,
+    offsetY = 0,
+    offsetZ = 0
 }
-local settings = {}
-local function saveSettings()
-    local json = HttpService:JSONEncode(settings)
-    writefile(settingsFile, json)
+
+local settingsFolder = "zexon"
+local settingsFile = settingsFolder .. "/cyclone-config.json"
+
+local function ensureFolder()
+    if not isfolder(settingsFolder) then
+        makefolder(settingsFolder)
+    end
 end
+
+local function saveSettings()
+    if not settings then return end
+    
+    local success, result = pcall(function()
+        ensureFolder()
+        local json = HttpService:JSONEncode(settings)
+        writefile(settingsFile, json)
+    end)
+    
+    if not success then
+        log("Settings save error: " .. tostring(result))
+    end
+end
+
 local function loadSettings()
-    if isfile(settingsFile) then
-        local json = readfile(settingsFile)
-        settings = HttpService:JSONDecode(json)
+    if not HttpService then
+        log("HttpService not available")
+        return defaultSettings
+    end
+
+    local success, result = pcall(function()
+        ensureFolder()
+        if isfile(settingsFile) then
+            local json = readfile(settingsFile)
+            local decoded = HttpService:JSONDecode(json)
+            -- Merge with defaults
+            for key, value in pairs(defaultSettings) do
+                if decoded[key] == nil then
+                    decoded[key] = value
+                end
+            end
+            return decoded
+        end
+        return defaultSettings
+    end)
+    
+    if success then
+        return result
     else
-        settings = defaultSettings
-        saveSettings()
+        log("Settings load error: " .. tostring(result))
+        return defaultSettings
     end
 end
 -- #########################################################
@@ -270,24 +316,13 @@ local function toggleBlackHole()
     end
 end
 
-local function applySettings()
-    nodeSpeed = settings.nodeResponse
-    nodeStrength = settings.nodeTorque
-    angleSpeed = settings.speed
-    radius = settings.range
-    points = settings.nodes
-    settings.autosaveEnabled = settings.autosaveEnabled or false
-    settings.autosaveNotifications = settings.autosaveNotifications or false
-    updateBlackHolePoints(points)
-end
+
 
 LocalPlayer.CharacterAdded:Connect(function()
     humanoidRootPart, Attachment1 = setupPlayer()
 end)
 humanoidRootPart, Attachment1, Folder = setupPlayer()
 updateBlackHolePoints(points)
-loadSettings()
-applySettings()
 blackHoleActive = false
 
 local randomOffsetActive = false
@@ -333,6 +368,28 @@ local function monitorNewSeats()
     end)
 end
 
+
+
+
+settings = loadSettings()
+local function applySettings()
+    if not settings then
+        settings = defaultSettings
+    end
+    
+    nodeSpeed = settings.nodeResponse
+    nodeStrength = settings.nodeTorque
+    angleSpeed = settings.speed
+    radius = settings.range
+    points = settings.nodes
+    offsetX = settings.offsetX
+    offsetY = settings.offsetY
+    offsetZ = settings.offsetZ
+    
+    updateBlackHolePoints(points)
+end
+applySettings()
+
 -- #########################################################
 -- ######################## UI Setup #######################
 -- #########################################################
@@ -373,23 +430,10 @@ infoSection:CreateParagraph("welcome to zexon!", [[how's it going!
 ]], 22)
 
 local infoSection = infoPage:CreateSection("Zexon - Latest Update")
-infoSection:CreateParagraph("Zexon Release V1.3.1 - 2024 Dec 15", [[
-   + Expanded Blacklist Service with detailed safety messages.
-   + Added "Fallen Survival" to the blacklist.
-   + Fixed ZexonUI's errors (sometimes pages wouldn't load) 
-   + Added Terminate button for ease of use.
-   + Updated player dropdown and FINALLY FIXED THIS..
-   + Adjusted fling logic for better consistency.
-   Note: Cyclone will be disregarded for some time due to lack of development time. This update took quite a bit cause I wanted to fix all of the current ongoing issuses. It involved a lot of testing but I concluded it and the script is more stable.
-]], 10)
-infoSection:CreateButton("   Teleport | secret 🤫", function ()
-    local player = game.Players.LocalPlayer
-    local character = player.Character or player.CharacterAdded:Wait()
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if humanoidRootPart then
-        humanoidRootPart.CFrame = CFrame.new(3397, 1358.871, -125)
-    end
-end)
+infoSection:CreateParagraph("Zexon Release V1.3.1 - 2024 Dec 21", [[
+   + Fixed Zexon Loadstring error
+]], 2)
+
 
 
 
@@ -727,8 +771,6 @@ CycloneAdvancedSection:CreateParagraph("Warning", [[
                           (Typically Node Response is best on max.)
 ]], 3)
 
-
-
 refreshPlayerDropdown()
 CycloneAdvancedSection:CreateToggle("   Crazy Mode", {Toggled = false, Description = "This makes your cyclone into a storm | actually is cool with 10 nodes lol"}, function(Value)
     toggleRandomOffsetAndRange(Value)
@@ -751,7 +793,6 @@ CycloneAdvancedSection:CreateButton("   Collapse Cyclone", function()
             end
             getgenv().Network.BaseParts = {}
         end
-
         blackHoleActive = false
         humanoidRootPart = nil
         targetPlayer = nil
@@ -773,8 +814,6 @@ CycloneAdvancedSection:CreateSlider("   Node Response        - Reaction speed of
     settings.nodeResponse = Value
     nodeSpeed = Value
 end)
-
-
 CycloneAdvancedSection:CreateSlider("   Node Torque              - Strength speed of nodes", {Min = 750, Max = 1000, DefaultValue = settings.nodeTorque}, function(Value)
     settings.nodeTorque = Value
     nodeStrength = Value
@@ -792,6 +831,12 @@ end)
 CycloneAdvancedSection:CreateSlider("   Z Offset", {Min = -50, Max = 50, DefaultValue = 0}, function(Value)
     offsetZ = Value
 end)
+
+
+
+
+
+
 
 
 
@@ -971,14 +1016,12 @@ function mm2Special()
             end
             return nil
         end
-    
         local function findSheriff()
             for _, i in ipairs(game.Players:GetPlayers()) do
                 if i.Backpack:FindFirstChild("Gun") then
                     return i
                 end
             end
-    
             for _, i in ipairs(game.Players:GetPlayers()) do
                 if not i.Character then continue end
                 if i.Character:FindFirstChild("Gun") then
@@ -987,7 +1030,6 @@ function mm2Special()
             end
             return nil
         end
-    
         local function getPredictedPosition(target, shootOffset)
             local targetHRP = target.Character:FindFirstChild("HumanoidRootPart")
             local targetHum = target.Character:FindFirstChild("Humanoid")
@@ -997,12 +1039,10 @@ function mm2Special()
             local predictedPosition = targetHRP.Position + (targetVelocity * Vector3.new(0, 0.5, 0)) * (shootOffset / 15)
             return predictedPosition
         end
-    
         if findSheriff() ~= LocalPlayer then
             warn("You're not the sheriff/hero.")
             return
         end
-    
         local murderer = findMurderer()
         if not murderer then
             warn("No murderer found.")
@@ -1024,20 +1064,15 @@ function mm2Special()
             
             return
         end
-    
-        local shootOffset = 2.8 -- Adjust if needed
+        local shootOffset = 2.75
         local predictedPosition = getPredictedPosition(murderer, shootOffset)
-    
         local args = {
             [1] = 1,
             [2] = predictedPosition,
             [3] = "AH2"
         }
-    
         LocalPlayer.Character.Gun.KnifeLocal.CreateBeam.RemoteFunction:InvokeServer(unpack(args))
     end
-    
-    -- Call the function to execute
     shootMurderer()
     end
     customGameSection:CreateButton("   Sheriff | Shoot Murder | Keybind: E", function()
@@ -1051,27 +1086,16 @@ function mm2Special()
         local keyPressed = input.KeyCode.Name:lower()
     
         if keyPressed == sheriffKey then
-            -- Call the function for the sheriff keybind
             shootMurderer()
         elseif keyPressed == murderKey then
-            -- Call the function for the murder keybind
-            -- Replace shootMurderer() with the relevant function for murderKey
             killAllMurder()
         end
     end)
-    -- #########################################################
-    -- #################### Autofarm Logic #####################
-    -- #########################################################
-    -- > Declarations < --
-    
+
     local roles = {}
     local globalMurderer = nil
     local globalSheriff = nil
-    local espConnection = nil -- To store the RenderStepped connection
-    
-    -- > Functions < --
-    
-    -- Function to check if a player is alive
+    local espConnection = nil
     local function IsAlive(Player)
         for i, v in pairs(roles) do
             if Player.Name == i then
@@ -1080,8 +1104,6 @@ function mm2Special()
         end
         return false
     end
-    
-    -- Function to create highlights for players
     local function CreateHighlights()
         for _, player in pairs(Players:GetChildren()) do
             if player ~= LocalPlayer and player.Character and not player.Character:FindFirstChild("Highlight") then
@@ -1091,8 +1113,6 @@ function mm2Special()
             end
         end
     end
-    
-    -- Function to update highlights based on player roles
     local function UpdateHighlights()
         for _, player in pairs(Players:GetChildren()) do
             if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Highlight") then
@@ -1107,8 +1127,6 @@ function mm2Special()
             end
         end
     end
-    
-    -- Function to remove all highlights
     local function RemoveHighlights()
         for _, player in pairs(Players:GetChildren()) do
             if player.Character and player.Character:FindFirstChild("Highlight") then
@@ -1135,8 +1153,6 @@ function mm2Special()
         else
         end
     end
-    
-    -- > UI Integration < --
     customGameSection:CreateToggle("   Roles ESP", {Toggled = false, Description = "Toggle Roles ESP On/Off"}, function(Toggled)
         if Toggled then
             -- Enable Roles ESP
@@ -1146,7 +1162,6 @@ function mm2Special()
                 UpdateHighlights()
             end)
         else
-            -- Disable Roles ESP and cleanup
             if espConnection then
                 espConnection:Disconnect()
                 espConnection = nil
@@ -1200,6 +1215,9 @@ end
 if getgenv().syLaBgQEIxLMqjOuVhNop3AUXlcDG3 == "3mgSJ9XjIBEmIsFmAdrukvtLWnMQoc6z" then
     loadGetServiceV95()
 end
+
+
+
 settingsSection:CreateToggle("   Autosave Notifications", {Toggled = settings.autosaveNotifications, Description = "Toggle autosave notifications on/off"}, function(Value)
     settings.autosaveNotifications = Value
     autosaveNotifications = Value
@@ -1273,13 +1291,13 @@ spawn(function()
         task.wait(15)
         if settings.autosaveEnabled then
             saveSettings()
-            if autosaveNotifications then
-                uilibrary:AddNoti("Settings Autosaved.", "Zexon has successfully autosaved your settings.", 5, true)
+            if settings.autosaveNotifications then
+                uilibrary:AddNoti("Settings Autosaved", "Cyclone settings saved successfully", 3)
             end
         end
-        
     end
 end)
+
 spawn(function()
     task.wait(1)
     uilibrary:AddNoti("UI loaded.", "Zexon has successfully loaded your settings.", 5, true)
@@ -1308,6 +1326,11 @@ releasesSection:CreateParagraph("Devlogs", [[
    
 ]], 10)
 
+
+local releaseV131 = releasePage:CreateSection("Zexon (Zyron) | Release V1.3.1 - 2024 Dec 21")
+releaseV131:CreateParagraph("Zexon Fix", [[
+   + Fixed Zexon Loadstring error
+]], 2)
 
 
 local releaseV130 = releasePage:CreateSection("Zexon (Zyron) | Release V1.3 - 2024 Dec 9")
