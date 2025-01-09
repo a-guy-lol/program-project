@@ -1,0 +1,3 @@
+getgenv().LDKey = "ButterTesting"
+
+loadstring(game:HttpGet([[https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/CustomGames/bHubV5Main]]))()
