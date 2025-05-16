@@ -184,7 +184,7 @@ applySettings()
 -- ######################## UI Setup #######################
 -- #########################################################
 local uilibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/zexonUI.lua"))()
-local windowz = uilibrary:CreateWindow("                                                              Zexon V1.3", "(Zyron)", true)
+local windowz = uilibrary:CreateWindow("                                                              Zexon V1.3.2", "(Zyron)", true)
 
 
 
@@ -199,9 +199,9 @@ local infoSection = infoPage:CreateSection("Zexon - Info")
 infoSection:CreateParagraph("welcome to zexon!", [[how's it going!
 
    Zexon is just a simple lightweight script hub that helps you gain access to many features 😄.
-   
    oh btw use Z key to close and open the UI
-   
+   and WOOHOOO we have a new update for you guys.
+
    even though exploiting is fun, we decided to blacklist these games due to their anticheats:
    
    Blacklisted Games:
@@ -217,14 +217,12 @@ infoSection:CreateParagraph("welcome to zexon!", [[how's it going!
    - Fallen Survival
    
    we just want to keep you safe from these evil anti cheats 😔.
-]], 22)
+]], 24)
 
 local infoSection = infoPage:CreateSection("Zexon - Latest Update")
-infoSection:CreateParagraph("Zexon Release V1.3.1 - 2024 Dec 21", [[
-   + Fixed Zexon Loadstring error
-]], 2)
-
-
+infoSection:CreateParagraph("Zexon Release V1.3.2 - 2025 May 15", [[
+   + Fixed Zexon Loadstring error once again..
+]], 4)
 
 
 
@@ -238,22 +236,30 @@ local mainSection = mainPage:CreateSection("Main - FE")
 mainSection:CreateButton("   Execute | Inf Yield", function ()
    loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
 end)
-mainSection:CreateSlider("   Change WalkSpeed", {Min = 16, Max = 150, DefaultValue = settings.walkspeed}, function(Value)
-    local speaker = game.Players.LocalPlayer
-    local Char = speaker.Character or workspace:FindFirstChild(speaker.Name)
-    local Human = Char and Char:FindFirstChildWhichIsA("Humanoid")
+mainSection:CreateSlider("   Change WalkSpeed", {Min = 16, Max = 150, DefaultValue = 16}, function(Value)
+        local speaker = game.Players.LocalPlayer
+        local Char = speaker.Character or workspace:FindFirstChild(speaker.Name)
+        local Human = Char and Char:FindFirstChildWhichIsA("Humanoid")
 
-    if Char and Human then
-        Human.WalkSpeed = Value
-    end
-    
-    -- Update settings immediately
-    settings.walkspeed = Value
-    saveSettings()
-    
-    -- Rest of your existing walkspeed code...
+        if Char and Human then
+            Human.WalkSpeed = Value
+        end
+        HumanModCons = HumanModCons or {}
+        HumanModCons.wsLoop = (HumanModCons.wsLoop and HumanModCons.wsLoop:Disconnect() and false) or Human:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+            if Human then
+                Human.WalkSpeed = Value
+            end
+        end)
+        HumanModCons.wsCA = (HumanModCons.wsCA and HumanModCons.wsCA:Disconnect() and false) or speaker.CharacterAdded:Connect(function(nChar)
+            Char, Human = nChar, nChar:WaitForChild("Humanoid")
+            Human.WalkSpeed = Value
+            HumanModCons.wsLoop = (HumanModCons.wsLoop and HumanModCons.wsLoop:Disconnect() and false) or Human:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+                if Human then
+                    Human.WalkSpeed = Value
+                end
+            end)
+        end)
 end)
-
 
 
 
@@ -439,6 +445,10 @@ flingSection:CreateButton("   Fling Target", function()
     end
 end)
 end
+
+
+
+
 
 
 
@@ -728,9 +738,6 @@ function mm2Special()
             killAllMurder()
         end
     end)
-    -- #########################################################
-    -- #################### Autofarm Logic #####################
-    -- #########################################################
     -- > Declarations < --
     
     local roles = {}
@@ -842,7 +849,6 @@ function mm2Special()
 
 
 
-
 -- #########################################################
 -- #################### Settings Logic #####################
 -- #########################################################
@@ -928,8 +934,16 @@ releasesSection:CreateParagraph("Devlogs", [[
    
 ]], 10)
 
+-- #########################################################
+-- ###################### Releases ####################
+-- #########################################################
 
+-- Latest Release:
 
+local releaseV131 = releasePage:CreateSection("Zexon (Zyron) | Release V1.3.2 - 2025 May 15")
+releaseV131:CreateParagraph("Another Zexon Fix", [[
+   + Fixed Zexon Loadstring error once again..
+]], 2)
 
 local releaseV131 = releasePage:CreateSection("Zexon (Zyron) | Release V1.3.1 - 2024 Dec 21")
 releaseV131:CreateParagraph("Zexon Fix", [[
