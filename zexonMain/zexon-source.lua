@@ -1,1 +1,1 @@
-print("[zexon] You cannot use this service.")
+game.Players.LocalPlayer:Kick("You cannot use this service.")
