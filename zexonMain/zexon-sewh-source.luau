@@ -1,4 +1,3 @@
-
 local uilibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/zexonUI.lua"))()
 local windowz = uilibrary:CreateWindow("                                                              Zexon V1", "(SEWH Edition)", true)
 
@@ -14,7 +13,7 @@ infoSection:CreateParagraph("welcome to zexon!", [[how's it going!
    oh btw use Z key to close and open the UI
 ]], 5)
 infoSection:CreateParagraph("Discontinue Note", [[
-   Zexon Script will be discontinued forever. The only updates I will provide are loadstring fixes so the script executes and is usuable.
+   Zexon Script will be discontinued forever. The only updates I will provide are loadstring fixes so the script executes and is usable.
 ]], 4)
 
 -- #########################################################
@@ -27,6 +26,7 @@ local farmSection = sewhPage:CreateSection("SEWH - Farm")
 local Players     = game:GetService("Players")
 local RunService  = game:GetService("RunService")
 local Workspace   = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local player      = Players.LocalPlayer
 
 local farmEnabled = false
@@ -62,6 +62,7 @@ end
 local scanParams = OverlapParams.new()
 scanParams.FilterType = Enum.RaycastFilterType.Blacklist
 
+-- Create platform under player
 local function createPlatform(pos)
     local p = Instance.new("Part")
     p.Size         = platformSize
@@ -74,6 +75,7 @@ local function createPlatform(pos)
     task.delay(1.5, function() if p.Parent then p:Destroy() end end)
 end
 
+-- Teleport player
 local function teleportTo(pos)
     local char = player.Character
     if not char then return end
@@ -84,6 +86,7 @@ local function teleportTo(pos)
     currentTargetPosition = pos
 end
 
+-- Detect incoming threats
 local function isThreatApproaching()
     scanParams.FilterDescendantsInstances = getValidFilterList()
     local char = player.Character
@@ -103,6 +106,7 @@ local function isThreatApproaching()
     return false
 end
 
+-- Check if teleport position is clear
 local function isPositionClear(pos)
     local boxParams = OverlapParams.new()
     boxParams.FilterType = Enum.RaycastFilterType.Blacklist
@@ -119,6 +123,7 @@ local function isPositionClear(pos)
     return true
 end
 
+-- Heartbeat: stray, damage, threat
 local function onHeartbeat(dt)
     if not farmEnabled then return end
     local char = player.Character
@@ -127,15 +132,18 @@ local function onHeartbeat(dt)
     local humanoid = char:FindFirstChild("Humanoid")
     local hrp      = char:FindFirstChild("HumanoidRootPart")
 
+    -- Stray check
     if hrp and currentTargetPosition and (hrp.Position - currentTargetPosition).Magnitude > safeRadius then
         teleportTo(currentTargetPosition)
     end
 
+    -- Damage check
     if humanoid and lastHealth and humanoid.Health < lastHealth then
         teleportTo(currentTargetPosition or teleportPositions[1])
     end
     lastHealth = humanoid and humanoid.Health or lastHealth
 
+    -- Threat check (throttled)
     threatTimer += dt
     if threatTimer >= threatCheckInterval then
         threatTimer = 0
@@ -145,6 +153,7 @@ local function onHeartbeat(dt)
     end
 end
 
+-- Teleport cycle
 local function startTeleportLoop()
     spawn(function()
         while farmEnabled do
@@ -162,22 +171,35 @@ local function startTeleportLoop()
     end)
 end
 
+-- Simulate a key press using VirtualInputManager
+local function simulateKeyPress(key)
+    VirtualInputManager:SendKeyEvent(true, key, false, game)
+    task.wait(0.1) -- Simulate key hold duration
+    VirtualInputManager:SendKeyEvent(false, key, false, game)
+end
+
 local function startAntiIdle()
     spawn(function()
+        local actions = {
+            function() simulateKeyPress(Enum.KeyCode.W) end,   
+            function() simulateKeyPress(Enum.KeyCode.A) end,   
+            function() simulateKeyPress(Enum.KeyCode.S) end,   
+            function() simulateKeyPress(Enum.KeyCode.D) end,   
+            function() simulateKeyPress(Enum.KeyCode.Space) end 
+        }
         while farmEnabled do
-            local char = player.Character
-            if char then
-                local h = char:FindFirstChild("Humanoid")
-                if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
-            end
-            task.wait(0.25)
+            local action = actions[math.random(1, #actions)] 
+            action()
+            task.wait(math.random(2, 5) / 10)
         end
     end)
 end
 
+-- Start farm
 local function startFarm()
     farmEnabled = true
 
+    -- Disable 3D rendering every 0.5s
     spawn(function()
         while farmEnabled do
             RunService:Set3dRenderingEnabled(false)
@@ -219,6 +241,7 @@ farmSection:CreateParagraph("Warning", [[
         Script is in beta. Many errors can occur.
 ]], 5)
 
+-- UI Toggles
 farmSection:CreateToggle("   Enable AFK-Farm", {Toggled = false, Description = "Teleports to a hidden and safe location"}, function(on)
     if on then startFarm() else stopFarm() end
 end)
