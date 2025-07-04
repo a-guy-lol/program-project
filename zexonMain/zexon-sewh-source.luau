@@ -7,10 +7,9 @@ local windowz = uilibrary:CreateWindow("                                        
 
 local infoPage = windowz:CreatePage("Info")
 local infoSection = infoPage:CreateSection("Zexon - Info")
-infoSection:CreateParagraph("latest update", [[how's it going!
-                        zexon v1.1
-         fixed farm issue with game's detection
-]], 4)
+infoSection:CreateParagraph("zexon v1.1", [[
+    - fixed farm issue with game's detection
+]], 1)
 infoSection:CreateParagraph("welcome to zexon!", [[how's it going!
 
    Zexon is just a simple lightweight script hub that helps you gain access to many features 😄.
@@ -18,7 +17,7 @@ infoSection:CreateParagraph("welcome to zexon!", [[how's it going!
 ]], 3)
 infoSection:CreateParagraph("Discontinue Note", [[
    Zexon Script will be discontinued forever. The only updates I will provide are loadstring fixes so the script executes and is usable.
-]], 4)
+]], 2)
 
 -- #########################################################
 -- ######################## SEWH / Farm Page ######################
