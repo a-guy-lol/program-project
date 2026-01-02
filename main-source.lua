@@ -121,6 +121,9 @@ local defaultSettings = {
     outdoorAmbientR = 100,
     outdoorAmbientG = 100,
     outdoorAmbientB = 100
+    ,
+    style = 1,
+    shadowsEnabled = true
 }
 local settingsFolder = "zexon"
 local settingsFile = settingsFolder .. "/cyclone-config.json"
@@ -134,7 +137,14 @@ local function saveSettings()
    
     local success, result = pcall(function()
         ensureFolder()
-        local json = HttpService:JSONEncode(settings)
+        -- Do not persist transient offsets from UI (we removed offset sliders from saving)
+        local toSave = {}
+        for k, v in pairs(settings) do
+            if k ~= "offsetX" and k ~= "offsetY" and k ~= "offsetZ" then
+                toSave[k] = v
+            end
+        end
+        local json = HttpService:JSONEncode(toSave)
         writefile(settingsFile, json)
     end)
    
@@ -170,9 +180,32 @@ local function loadSettings()
         return defaultSettings
     end
 end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 -- #########################################################
 -- ###################### Core Features ####################
 -- #########################################################
+
+-- Cyclone Movement Style Configuration
+-- 1 = Circular Orbit (default spinning around player)
+-- 2 = Wave Pattern (nodes move in a sine wave around player)
+-- 3 = Figure-8 (infinity pattern, nodes move in lemniscate shape)
+-- 4 = Tornado (nodes spiral upward in a cone shape)
+-- 5 = Orbital Chaos (each node has independent elliptical orbit at different angles)
+local CycloneStyle = 4
+
 if not getgenv().Network then
     getgenv().Network = {
         BaseParts = {},
@@ -198,10 +231,22 @@ if not getgenv().Network then
     end
     EnablePartControl()
 end
+
+local characterDied = false
+
 local function setupPlayer()
     local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
     targetPlayer = humanoidRootPart
+    
+    -- Monitor character death
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.Died:Connect(function()
+            characterDied = true
+        end)
+    end
+    
     local Folder = Workspace:FindFirstChild("CycloneNodes")
     if not Folder then
         Folder = Instance.new("Folder", Workspace)
@@ -215,13 +260,43 @@ local function setupPlayer()
     Part.Size = Vector3.new(1, 1, 1)
     return humanoidRootPart, Attachment, Folder
 end
+
+-- Handle character respawn
+local function handleRespawn()
+    LocalPlayer.CharacterAdded:Connect(function(character)
+        -- Wait for character to fully load
+        character:WaitForChild("HumanoidRootPart")
+        
+        -- Reset the died flag
+        characterDied = false
+        
+        -- Setup the new character
+        humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        targetPlayer = humanoidRootPart
+        
+        -- Monitor new character's death
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.Died:Connect(function()
+                characterDied = true
+            end)
+        end
+    end)
+end
+
+-- Initialize respawn handler
+handleRespawn()
+
 local function updateBlackHolePoints(count)
-    for _, part in pairs(blackHolePoints) do
-        if part.Parent then
-            part.Parent:Destroy()
+    -- Clear existing points
+    for _, attachment in pairs(blackHolePoints) do
+        if attachment.Parent then
+            attachment.Parent:Destroy()
         end
     end
     blackHolePoints = {}
+    
+    -- Create new points
     for i = 1, count do
         local Part = Instance.new("Part", Workspace.CycloneNodes)
         local Attachment = Instance.new("Attachment", Part)
@@ -231,89 +306,540 @@ local function updateBlackHolePoints(count)
         Part.Size = Vector3.new(1, 1, 1)
         table.insert(blackHolePoints, Attachment)
     end
-end
-local function ForcePart(v)
-    if v:IsA("Part") and not v.Anchored and not v.Parent:FindFirstChild("Humanoid") and not v.Parent:FindFirstChild("Head") and v.Name ~= "Handle" then
-        for _, x in next, v:GetChildren() do
-            if x:IsA("BodyAngularVelocity") or x:IsA("BodyForce") or x:IsA("BodyGyro") or x:IsA("BodyPosition") or x:IsA("BodyThrust") or x:IsA("BodyVelocity") or x:IsA("RocketPropulsion") then
-                x:Destroy()
+    
+    -- Redistribute all existing parts to new nodes with load balancing
+    if blackHoleActive and #blackHolePoints > 0 then
+        local partsPerNode = {}
+        for i = 1, #blackHolePoints do
+            partsPerNode[i] = 0
+        end
+        
+        -- Evenly distribute parts across nodes
+        for idx, part in pairs(Network.BaseParts) do
+            if part:IsDescendantOf(Workspace) and part:FindFirstChild("AlignPosition") then
+                local alignPos = part:FindFirstChild("AlignPosition")
+                
+                -- Find node with least parts
+                local minNode = 1
+                local minCount = partsPerNode[1]
+                for i = 2, #blackHolePoints do
+                    if partsPerNode[i] < minCount then
+                        minNode = i
+                        minCount = partsPerNode[i]
+                    end
+                end
+                
+                alignPos.Attachment1 = blackHolePoints[minNode]
+                partsPerNode[minNode] = partsPerNode[minNode] + 1
             end
-        end
-        if v:FindFirstChild("Attachment") then
-            v:FindFirstChild("Attachment"):Destroy()
-        end
-        if v:FindFirstChild("AlignPosition") then
-            v:FindFirstChild("AlignPosition"):Destroy()
-        end
-        if v:FindFirstChild("Torque") then
-            v:FindFirstChild("Torque"):Destroy()
-        end
-        v.CanCollide = false
-        Network.RetainPart(v)
-        local Torque = Instance.new("Torque", v)
-        Torque.Torque = Vector3.new(nodeStrength, nodeStrength, nodeStrength)
-        local AlignPosition = Instance.new("AlignPosition", v)
-        local Attachment2 = Instance.new("Attachment", v)
-        Torque.Attachment0 = Attachment2
-        AlignPosition.MaxForce = math.huge
-        AlignPosition.MaxVelocity = math.huge
-        AlignPosition.Responsiveness = nodeSpeed
-        AlignPosition.Attachment0 = Attachment2
-        if #blackHolePoints > 0 then
-            local pointIndex = math.random(1, #blackHolePoints)
-            AlignPosition.Attachment1 = blackHolePoints[pointIndex]
         end
     end
 end
-local function toggleBlackHole()
-    blackHoleActive = not blackHoleActive
-    if blackHoleActive then
-        for _, v in next, Workspace:GetDescendants() do
-            ForcePart(v)
+
+-- Check if part is welded to an anchored part
+local function isWeldedToAnchoredPart(part)
+    -- Safety check: ensure part still exists
+    if not part or not part.Parent then return true end
+    
+    for _, child in pairs(part:GetChildren()) do
+        if child:IsA("Weld") or child:IsA("WeldConstraint") or child:IsA("Motor6D") then
+            local part0 = child.Part0
+            local part1 = child.Part1
+            if part0 and part0.Anchored then return true end
+            if part1 and part1.Anchored then return true end
         end
-        Workspace.DescendantAdded:Connect(function(v)
-            if blackHoleActive then
-                ForcePart(v)
-            end
-        end)
-        spawn(function()
-            while blackHoleActive and RunService.RenderStepped:Wait() do
-                angle = angle + math.rad(angleSpeed)
-                local targetCFrame = (targetPlayer and targetPlayer.CFrame) or humanoidRootPart.CFrame
-       
-                for i, attachment in pairs(blackHolePoints) do
-                    local angleOffset = (math.pi * 2 / #blackHolePoints) * (i - 1)
-                    local baseX = math.cos(angle + angleOffset) * radius
-                    local baseZ = math.sin(angle + angleOffset) * radius
-                    attachment.WorldCFrame = targetCFrame * CFrame.new(
-                        baseX + offsetX,
-                        offsetY,
-                        baseZ + offsetZ
-                    )
-                end
-            end
-        end)
-    else
+    end
+    return false
+end
+
+-- Optimized: Check if part is valid for force application
+local function isValidPart(v)
+    -- Safety check: ensure part still exists
+    if not v or not v.Parent then return false end
+    if not v:IsA("BasePart") then return false end
+    if v.Anchored then return false end
+    
+    -- Check parent exists before checking for Humanoid/Head
+    local parent = v.Parent
+    if not parent then return false end
+    if parent:FindFirstChild("Humanoid") or parent:FindFirstChild("Head") then return false end
+    if v.Name == "Handle" then return false end
+    if isWeldedToAnchoredPart(v) then return false end
+    return true
+end
+
+local function ForcePart(v)
+    if not isValidPart(v) then return end
+    
+    -- Skip if already controlled
+    if v:FindFirstChild("AlignPosition") and v:FindFirstChild("Torque") then
+        return
+    end
+    
+    for _, x in next, v:GetChildren() do
+        if x:IsA("BodyAngularVelocity") or x:IsA("BodyForce") or x:IsA("BodyGyro") or x:IsA("BodyPosition") or x:IsA("BodyThrust") or x:IsA("BodyVelocity") or x:IsA("RocketPropulsion") then
+            x:Destroy()
+        end
+    end
+    if v:FindFirstChild("Attachment") then
+        v:FindFirstChild("Attachment"):Destroy()
+    end
+    if v:FindFirstChild("AlignPosition") then
+        v:FindFirstChild("AlignPosition"):Destroy()
+    end
+    if v:FindFirstChild("Torque") then
+        v:FindFirstChild("Torque"):Destroy()
+    end
+    v.CanCollide = false
+    Network.RetainPart(v)
+    local Torque = Instance.new("Torque", v)
+    Torque.Torque = Vector3.new(nodeStrength, nodeStrength, nodeStrength)
+    local AlignPosition = Instance.new("AlignPosition", v)
+    local Attachment2 = Instance.new("Attachment", v)
+    Torque.Attachment0 = Attachment2
+    AlignPosition.MaxForce = math.huge
+    AlignPosition.MaxVelocity = math.huge
+    AlignPosition.Responsiveness = nodeSpeed
+    AlignPosition.Attachment0 = Attachment2
+    
+    -- Distribute to node with least parts
+    if #blackHolePoints > 0 then
+        local partsPerNode = {}
+        for i = 1, #blackHolePoints do
+            partsPerNode[i] = 0
+        end
+        
+        -- Count parts assigned to each node
         for _, part in pairs(Network.BaseParts) do
-            if part:IsDescendantOf(Workspace) then
-                part.CustomPhysicalProperties = nil
-                part.CanCollide = true
-                part.Velocity = Vector3.new(0, 0, 0)
-                part.RotVelocity = Vector3.new(0, 0, 0)
-                for _, child in pairs(part:GetChildren()) do
-                    if child:IsA("Attachment") or child:IsA("AlignPosition") or child:IsA("Torque") then
-                        child:Destroy()
+            if part ~= v and part:IsDescendantOf(Workspace) and part:FindFirstChild("AlignPosition") then
+                local align = part:FindFirstChild("AlignPosition")
+                if align.Attachment1 then
+                    for i, node in ipairs(blackHolePoints) do
+                        if align.Attachment1 == node then
+                            partsPerNode[i] = partsPerNode[i] + 1
+                            break
+                        end
                     end
                 end
-                part.Position = Vector3.new(0, -1000, 0)
             end
         end
-        Network.BaseParts = {}
-        for _, attachment in pairs(blackHolePoints) do
+        
+        -- Find node with minimum parts
+        local minNode = 1
+        local minCount = partsPerNode[1]
+        for i = 2, #blackHolePoints do
+            if partsPerNode[i] < minCount then
+                minNode = i
+                minCount = partsPerNode[i]
+            end
+        end
+        
+        AlignPosition.Attachment1 = blackHolePoints[minNode]
+    end
+end
+
+-- Optimized: Apply force only to valid parts at startup (with yielding to prevent freezes)
+local function applyForceToExistingParts()
+    local parts = Workspace:GetDescendants()
+    local processedCount = 0
+    
+    for _, v in pairs(parts) do
+        if isValidPart(v) then
+            ForcePart(v)
+            processedCount = processedCount + 1
+            
+            -- Yield every 10 parts to prevent freezing
+            if processedCount % 10 == 0 then
+                task.wait()
+            end
+        end
+    end
+end
+
+-- Monitor parts that become unanchored or lose welds
+local anchoredChangedConnections = {}
+local childRemovedConnections = {}
+local descendantAddedConnection = nil
+local partProcessQueue = {}
+local isProcessingQueue = false
+
+local function disconnectAllMonitoring()
+    -- Disconnect all anchored property listeners
+    for part, connection in pairs(anchoredChangedConnections) do
+        if connection then
+            connection:Disconnect()
+        end
+    end
+    anchoredChangedConnections = {}
+    
+    -- Disconnect all child removed listeners
+    for part, connection in pairs(childRemovedConnections) do
+        if connection then
+            connection:Disconnect()
+        end
+    end
+    childRemovedConnections = {}
+    
+    -- Disconnect descendant added listener
+    if descendantAddedConnection then
+        descendantAddedConnection:Disconnect()
+        descendantAddedConnection = nil
+    end
+    
+    -- Clear queue
+    partProcessQueue = {}
+end
+
+-- Process parts from queue without freezing
+local function processPartQueue()
+    if isProcessingQueue then return end
+    isProcessingQueue = true
+    
+    spawn(function()
+        while #partProcessQueue > 0 and blackHoleActive do
+            local batch = {}
+            -- Process up to 5 parts per batch
+            for i = 1, math.min(5, #partProcessQueue) do
+                table.insert(batch, table.remove(partProcessQueue, 1))
+            end
+            
+            for _, part in ipairs(batch) do
+                if blackHoleActive and part and part.Parent then
+                    ForcePart(part)
+                end
+            end
+            
+            task.wait() -- Yield between batches
+        end
+        isProcessingQueue = false
+    end)
+end
+
+local function monitorPartChanges()
+    -- Clear old connections first
+    disconnectAllMonitoring()
+    
+    local existingParts = Workspace:GetDescendants()
+    local processedCount = 0
+    
+    for _, v in pairs(existingParts) do
+        if v:IsA("BasePart") and not anchoredChangedConnections[v] then
+            anchoredChangedConnections[v] = v:GetPropertyChangedSignal("Anchored"):Connect(function()
+                if blackHoleActive and not v.Anchored then
+                    table.insert(partProcessQueue, v)
+                    processPartQueue()
+                end
+            end)
+            
+            -- Monitor when welds are destroyed
+            childRemovedConnections[v] = v.ChildRemoved:Connect(function(child)
+                if blackHoleActive and (child:IsA("Weld") or child:IsA("WeldConstraint") or child:IsA("Motor6D")) then
+                    if not v.Anchored and not isWeldedToAnchoredPart(v) then
+                        table.insert(partProcessQueue, v)
+                        processPartQueue()
+                    end
+                end
+            end)
+            
+            processedCount = processedCount + 1
+            
+            -- Yield every 50 parts to prevent freezing during setup
+            if processedCount % 50 == 0 then
+                task.wait()
+            end
+        end
+    end
+    
+    -- Monitor new parts added with queue system
+    descendantAddedConnection = Workspace.DescendantAdded:Connect(function(v)
+        if v:IsA("BasePart") and not anchoredChangedConnections[v] then
+            anchoredChangedConnections[v] = v:GetPropertyChangedSignal("Anchored"):Connect(function()
+                if blackHoleActive and not v.Anchored then
+                    table.insert(partProcessQueue, v)
+                    processPartQueue()
+                end
+            end)
+            
+            childRemovedConnections[v] = v.ChildRemoved:Connect(function(child)
+                if blackHoleActive and (child:IsA("Weld") or child:IsA("WeldConstraint") or child:IsA("Motor6D")) then
+                    if not v.Anchored and not isWeldedToAnchoredPart(v) then
+                        table.insert(partProcessQueue, v)
+                        processPartQueue()
+                    end
+                end
+            end)
+            
+            -- Queue part for processing instead of immediate
+            if blackHoleActive and isValidPart(v) then
+                table.insert(partProcessQueue, v)
+                processPartQueue()
+            end
+        end
+    end)
+end
+
+-- Continuously retry ownership for parts that may transfer to client
+local ownershipRetryEnabled = false
+local lastRebalanceTime = 0
+local function enableOwnershipRetry()
+    if ownershipRetryEnabled then return end
+    ownershipRetryEnabled = true
+    
+    spawn(function()
+        while blackHoleActive do
+            task.wait(2) -- Check every 2 seconds
+            local currentTime = tick()
+            
+            for _, part in pairs(Network.BaseParts) do
+                if part:IsDescendantOf(Workspace) and not part.Anchored then
+                    -- Attempt to maintain ownership
+                    part.Velocity = Network.Velocity
+                end
+            end
+            
+            -- Rebalance nodes every 5 seconds (optimized)
+            if currentTime - lastRebalanceTime >= 5 and #blackHolePoints > 1 then
+                lastRebalanceTime = currentTime
+                
+                local partsPerNode = {}
+                for i = 1, #blackHolePoints do
+                    partsPerNode[i] = {}
+                end
+                
+                -- Count parts per node
+                for _, part in pairs(Network.BaseParts) do
+                    if part:IsDescendantOf(Workspace) and part:FindFirstChild("AlignPosition") then
+                        local align = part:FindFirstChild("AlignPosition")
+                        if align.Attachment1 then
+                            for i, node in ipairs(blackHolePoints) do
+                                if align.Attachment1 == node then
+                                    table.insert(partsPerNode[i], part)
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+                
+                -- Find overloaded and underloaded nodes
+                local totalParts = #Network.BaseParts
+                local avgPartsPerNode = totalParts / #blackHolePoints
+                
+                for nodeIdx, parts in pairs(partsPerNode) do
+                    if #parts > avgPartsPerNode * 1.5 then -- Node is overloaded
+                        -- Move excess parts to less loaded nodes
+                        local excessCount = math.floor(#parts - avgPartsPerNode)
+                        for i = 1, math.min(excessCount, 3) do -- Limit redistributions per cycle
+                            local partToMove = parts[i]
+                            if partToMove and partToMove:FindFirstChild("AlignPosition") then
+                                -- Find least loaded node
+                                local minNode = 1
+                                local minCount = #partsPerNode[1]
+                                for j = 2, #blackHolePoints do
+                                    if #partsPerNode[j] < minCount then
+                                        minNode = j
+                                        minCount = #partsPerNode[j]
+                                    end
+                                end
+                                
+                                if minNode ~= nodeIdx then
+                                    partToMove:FindFirstChild("AlignPosition").Attachment1 = blackHolePoints[minNode]
+                                    table.insert(partsPerNode[minNode], partToMove)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        ownershipRetryEnabled = false
+    end)
+end
+
+-- Collapse cyclone function - can be called from UI
+local function collapseCyclone()
+    if typeof(getgenv().Network) == "table" then
+        if typeof(getgenv().Network.BaseParts) == "table" then
+            for _, part in pairs(getgenv().Network.BaseParts) do
+                if part and part:IsA("BasePart") then
+                    pcall(function()
+                        -- Drop part by resetting its properties
+                        part.CustomPhysicalProperties = nil
+                        part.CanCollide = true
+                        part.Velocity = Vector3.zero
+                        part.RotVelocity = Vector3.zero
+                        
+                        -- Remove cyclone-added components
+                        for _, child in pairs(part:GetChildren()) do
+                            if child:IsA("Attachment") or child:IsA("AlignPosition") or child:IsA("Torque") then
+                                child:Destroy()
+                            end
+                        end
+                    end)
+                end
+            end
+        end
+        getgenv().Network.BaseParts = {}
+    end
+    
+    -- Disconnect all monitoring connections
+    disconnectAllMonitoring()
+    
+    -- Mark cyclone as inactive
+    blackHoleActive = false
+    
+    -- Reset nodes to hidden position
+    for _, attachment in pairs(blackHolePoints) do
+        if attachment and attachment.Parent then
             attachment.WorldCFrame = CFrame.new(0, -1000, 0)
         end
     end
 end
+
+-- Calculate node position based on cyclone style
+local function calculateNodePosition(targetCFrame, nodeIndex, totalNodes, time)
+    local angleOffset = (math.pi * 2 / totalNodes) * (nodeIndex - 1)
+    local baseX, baseY, baseZ = 0, 0, 0
+    
+    if CycloneStyle == 1 then
+        -- Style 1: Circular Orbit (default)
+        baseX = math.cos(time + angleOffset) * radius
+        baseZ = math.sin(time + angleOffset) * radius
+        baseY = 0
+        
+    elseif CycloneStyle == 2 then
+        -- Style 2: Serpentine Wave (snake-like flowing motion in 3D space)
+        local segmentLength = (2 * math.pi) / math.max(1, totalNodes - 1)
+        local pathPosition = (nodeIndex - 1) * segmentLength
+        local waveFrequency = 2
+        
+        -- Primary circular path
+        local pathRadius = radius * 0.8
+        baseX = math.cos(time + pathPosition) * pathRadius
+        baseZ = math.sin(time + pathPosition) * pathRadius
+        
+        -- Add serpentine wave motion perpendicular to the path
+        local waveOffset = math.sin(time * waveFrequency + pathPosition * 3) * (radius * 0.4)
+        local tangentX = -math.sin(time + pathPosition)
+        local tangentZ = math.cos(time + pathPosition)
+        
+        baseX = baseX + tangentX * waveOffset
+        baseZ = baseZ + tangentZ * waveOffset
+        baseY = math.sin(time * 1.5 + pathPosition * 2) * (radius * 0.25)
+        
+    elseif CycloneStyle == 3 then
+        -- Style 3: Figure-8 / Infinity Pattern (lemniscate)
+        local scale = radius * 0.8
+        local t = time + angleOffset
+        local denominator = 1 + math.cos(t)^2
+        baseX = scale * math.sin(t) / denominator
+        baseZ = scale * math.sin(t) * math.cos(t) / denominator
+        baseY = 0
+        
+    elseif CycloneStyle == 4 then
+        -- Style 4: Tornado (spiral upward, widening at top)
+        local height = (nodeIndex - 1) / math.max(1, totalNodes - 1)
+        local tornadoRadius = radius * (0.3 + height * 0.7)
+        local rotationSpeed = time * 1.5
+        
+        baseX = math.cos(rotationSpeed + angleOffset) * tornadoRadius
+        baseZ = math.sin(rotationSpeed + angleOffset) * tornadoRadius
+        baseY = height * radius * 1.5
+        
+    elseif CycloneStyle == 5 then
+        -- Style 5: Orbital Chaos (independent elliptical orbits)
+        local nodePhase = angleOffset * 2.5
+        local eccentricity = 0.6
+        local tiltAngle = math.sin(nodePhase) * math.pi * 0.4
+        
+        -- Elliptical orbit
+        local a = radius
+        local b = radius * (1 - eccentricity)
+        local orbitX = a * math.cos(time + nodePhase)
+        local orbitY = b * math.sin(time + nodePhase)
+        
+        -- Apply 3D tilt
+        baseX = orbitX * math.cos(tiltAngle)
+        baseZ = orbitX * math.sin(tiltAngle)
+        baseY = orbitY
+    end
+    
+    return targetCFrame * CFrame.new(
+        baseX + offsetX,
+        baseY + offsetY,
+        baseZ + offsetZ
+    )
+end
+
+local function toggleBlackHole()
+    blackHoleActive = not blackHoleActive
+    if blackHoleActive then
+        -- Monitor for parts becoming unanchored (setup connections without immediate processing)
+        monitorPartChanges()
+        
+        -- Apply force to existing parts asynchronously to prevent freeze
+        spawn(function()
+            applyForceToExistingParts()
+        end)
+        
+        -- Listen for new parts being added (handled by queue in monitorPartChanges)
+        
+        -- Enable continuous ownership attempts
+        enableOwnershipRetry()
+        
+        -- Optimized: Update at 24Hz instead of every frame (RenderStepped ~60Hz)
+        spawn(function()
+            local updateInterval = 1/24 -- 24Hz = ~0.042 seconds per update
+            while blackHoleActive do
+                -- Check if character died
+                if characterDied then
+                    -- Pause updates until respawn
+                    while characterDied do
+                        task.wait(0.1)
+                    end
+                    -- Character respawned, continue
+                end
+                
+                task.wait(updateInterval)
+                
+                angle = angle + math.rad(angleSpeed)
+                local targetCFrame = (targetPlayer and targetPlayer.CFrame) or humanoidRootPart.CFrame
+       
+                for i, attachment in pairs(blackHolePoints) do
+                    attachment.WorldCFrame = calculateNodePosition(targetCFrame, i, #blackHolePoints, angle)
+                end
+            end
+        end)
+    else
+        collapseCyclone()
+    end
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 -- #########################################################
 -- ###################### Z-Shader Properties ####################
 -- #########################################################
@@ -424,29 +950,6 @@ end)
 humanoidRootPart, Attachment1, Folder = setupPlayer()
 updateBlackHolePoints(points)
 blackHoleActive = false
-local randomOffsetActive = false
-local originalValues = {X = offsetX, Y = offsetY, Z = offsetZ, Range = radius} -- Save original values
-local randomOffsetLoop = nil
-local function toggleRandomOffsetAndRange(state)
-    randomOffsetActive = state
-    if randomOffsetLoop then
-        randomOffsetLoop:Disconnect()
-        randomOffsetLoop = nil
-    end
-    if randomOffsetActive then
-        randomOffsetLoop = RunService.Heartbeat:Connect(function()
-            offsetX = math.random(-50, 50)
-            offsetY = math.random(-50, 50)
-            offsetZ = math.random(-50, 50)
-            radius = math.random(1, 100)
-        end)
-    else
-        offsetX = originalValues.X
-        offsetY = originalValues.Y
-        offsetZ = originalValues.Z
-        radius = originalValues.Range
-    end
-end
 local function updateSeats(canTouchState)
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("Seat") or obj:IsA("VehicleSeat") then
@@ -476,15 +979,40 @@ local function applySettings()
     offsetX = settings.offsetX
     offsetY = settings.offsetY
     offsetZ = settings.offsetZ
+    CycloneStyle = settings.style or CycloneStyle
    
     updateBlackHolePoints(points)
 end
 applySettings()
+-- Save original values (capture loaded settings so toggles don't overwrite them)
+local randomOffsetActive = false
+local originalValues = {X = offsetX, Y = offsetY, Z = offsetZ, Range = radius} -- Save original values
+local randomOffsetLoop = nil
+local function toggleRandomOffsetAndRange(state)
+    randomOffsetActive = state
+    if randomOffsetLoop then
+        randomOffsetLoop:Disconnect()
+        randomOffsetLoop = nil
+    end
+    if randomOffsetActive then
+        randomOffsetLoop = RunService.Heartbeat:Connect(function()
+            offsetX = math.random(-50, 50)
+            offsetY = math.random(-50, 50)
+            offsetZ = math.random(-50, 50)
+            radius = math.random(1, 100)
+        end)
+    else
+        offsetX = originalValues.X
+        offsetY = originalValues.Y
+        offsetZ = originalValues.Z
+        radius = originalValues.Range
+    end
+end
 -- #########################################################
 -- ######################## UI Setup #######################
 -- #########################################################
 local uilibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/zexonUI.lua"))()
-local windowz = uilibrary:CreateWindow(" Zexon V1.4", "(Zyrex)", true)
+local windowz = uilibrary:CreateWindow("                                                   Zexon V1.4", "(Zyrex)", true)
 -- #########################################################
 -- ######################## Info Page ######################
 -- #########################################################
@@ -520,6 +1048,14 @@ infoSection:CreateParagraph("Zexon Release V1.4 - 2025 Dec 31", [[
    + Made shaders less saturated by default.
    + Fling mechanics will be changed soon in a small update.
 ]], 4)
+
+
+
+
+
+
+
+
 -- #########################################################
 -- ######################## Main Page ######################
 -- #########################################################
@@ -728,7 +1264,7 @@ end
 -- #########################################################
 local CyclonePage = windowz:CreatePage("Cyclone")
 local CycloneSection = CyclonePage:CreateSection("Cyclone - Settings")
-CycloneSection:CreateSlider(" Speed - Orbit speed", {Min = 1, Max = 1000, DefaultValue = settings.speed}, function(Value)
+CycloneSection:CreateSlider(" Speed - Orbit speed", {Min = 1, Max = 150, DefaultValue = settings.speed}, function(Value)
     settings.speed = Value
     angleSpeed = Value
 end)
@@ -738,10 +1274,23 @@ CycloneSection:CreateSlider(" Range - Distance between the player", {Min = 1, Ma
         radius = Value
     end
 end)
-CycloneSection:CreateSlider(" Nodes - Amount of cyclones", {Min = 1, Max = 10, DefaultValue = settings.nodes}, function(Value)
+CycloneSection:CreateSlider(" Nodes - Amount of cyclones", {Min = 1, Max = 25, DefaultValue = settings.nodes}, function(Value)
     settings.nodes = Value
     points = Value
     updateBlackHolePoints(points)
+end)
+-- Cyclone Style Dropdown
+local _styleNames = {"Orbit", "Wavy orbit", "Infinity Style", "Tornado", "Orbital Chaos"}
+local _defaultStyleName = _styleNames[settings.style] or _styleNames[1]
+CycloneSection:CreateDropdown(" Style", {List = _styleNames, Default = _defaultStyleName}, function(selected)
+    for i, name in ipairs(_styleNames) do
+        if name == selected then
+            settings.style = i
+            CycloneStyle = i
+            saveSettings()
+            break
+        end
+    end
 end)
 local playerDropdown
 local function refreshPlayerDropdown()
@@ -815,37 +1364,13 @@ CycloneAdvancedSection:CreateToggle(" Crazy Mode", {Toggled = false, Description
     toggleRandomOffsetAndRange(Value)
 end)
 CycloneAdvancedSection:CreateButton(" Collapse Cyclone", function()
-    local function resetCyclone()
-        if typeof(getgenv().Network) == "table" then
-            if typeof(getgenv().Network.BaseParts) == "table" then
-                for _, part in pairs(getgenv().Network.BaseParts) do
-                    if part and part:IsA("BasePart") then
-                        pcall(function()
-                            -- Drop part by resetting its properties
-                            part.CustomPhysicalProperties = nil
-                            part.CanCollide = true
-                            part.Velocity = Vector3.zero
-                            part.RotVelocity = Vector3.zero
-                        end)
-                    end
-                end
-            end
-            getgenv().Network.BaseParts = {}
-        end
-        blackHoleActive = false
-        humanoidRootPart = nil
-        targetPlayer = nil
-        if Workspace:FindFirstChild("CycloneNodes") then
-            Workspace:FindFirstChild("CycloneNodes"):Destroy()
-        end
-        humanoidRootPart, Attachment1, Folder = setupPlayer()
-        updateBlackHolePoints(points)
-    end
-    local success, err = pcall(resetCyclone)
+    local success, err = pcall(collapseCyclone)
     if not success then
         warn("[zexon] Cyclone reset error:", err)
     end
 end)
+
+
 CycloneAdvancedSection:CreateSlider(" Node Response - Reaction speed of nodes", {Min = 750, Max = 100000, DefaultValue = settings.nodeResponse}, function(Value)
     settings.nodeResponse = Value
     nodeSpeed = Value
@@ -854,87 +1379,96 @@ CycloneAdvancedSection:CreateSlider(" Node Torque - Strength speed of nodes", {M
     settings.nodeTorque = Value
     nodeStrength = Value
 end)
-CycloneAdvancedSection:CreateSlider(" X Offset", {Min = -50, Max = 50, DefaultValue = 0}, function(Value)
-    offsetX = Value
-end)
-CycloneAdvancedSection:CreateSlider(" Y Offset", {Min = -50, Max = 50, DefaultValue = 0}, function(Value)
-    offsetY = Value
-    yOffset = Value
-end)
-CycloneAdvancedSection:CreateSlider(" Z Offset", {Min = -50, Max = 50, DefaultValue = 0}, function(Value)
-    offsetZ = Value
-end)
+-- Offsets sliders removed from UI per user request (Crazy Mode still applies random offsets)
 -- #########################################################
 -- ######################## Z Shaders ######################
 -- #########################################################
-local zShadersPage = windowz:CreatePage("Z Shaders")
-local zShadersSection = zShadersPage:CreateSection("Z Shaders - Settings")
-zShadersSection:CreateToggle(" Enable Z-Shaders", {Toggled = settings.shadersEnabled, Description = "Toggles custom shaders provided by Zexon"}, function(Value)
+local zShadersPage = windowz:CreatePage("Shaders")
+local zShadersEffects = zShadersPage:CreateSection("Shaders - Effects")
+local zShadersDOF = zShadersPage:CreateSection("Shaders - DOF")
+
+zShadersEffects:CreateToggle(" Enable Z-Shaders", {Toggled = settings.shadersEnabled, Description = "Toggles custom shaders provided by Zexon"}, function(Value)
     settings.shadersEnabled = Value
-    ToggleShadows(Value)
+    if settings.shadowsEnabled then ToggleShadows(Value) end
     ToggleColorCorrection(Value)
     ToggleBloom(Value)
     ToggleSunRays(Value)
     ToggleDOF(Value)
     saveSettings()
 end)
-zShadersSection:CreateSlider(" Brightness", {Min = 0, Max = 0.5, DefaultValue = settings.brightness}, function(Value)
-    settings.brightness = Value
+
+zShadersEffects:CreateToggle(" Shadows", {Toggled = settings.shadowsEnabled, Description = "Toggle global shadows"}, function(Value)
+    settings.shadowsEnabled = Value
+    if settings.shadersEnabled then
+        ToggleShadows(Value)
+    end
+    saveSettings()
+end)
+
+-- Color correction sliders (0..100 mapped to 0.00..1.00)
+zShadersEffects:CreateSlider(" Brightness", {Min = 0, Max = 100, DefaultValue = math.floor((settings.brightness or 0) * 100)}, function(Value)
+    settings.brightness = Value / 100
     if settings.shadersEnabled then UpdateColorCorrection() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" Contrast", {Min = 0, Max = 0.5, DefaultValue = settings.contrast}, function(Value)
-    settings.contrast = Value
+zShadersEffects:CreateSlider(" Contrast", {Min = 0, Max = 100, DefaultValue = math.floor((settings.contrast or 0) * 100)}, function(Value)
+    settings.contrast = Value / 100
     if settings.shadersEnabled then UpdateColorCorrection() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" Saturation", {Min = 0, Max = 0.5, DefaultValue = settings.saturation}, function(Value)
-    settings.saturation = Value
+zShadersEffects:CreateSlider(" Saturation", {Min = 0, Max = 100, DefaultValue = math.floor((settings.saturation or 0) * 100)}, function(Value)
+    settings.saturation = Value / 100
     if settings.shadersEnabled then UpdateColorCorrection() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" Bloom Intensity", {Min = 0, Max = 1, DefaultValue = settings.bloomIntensity}, function(Value)
-    settings.bloomIntensity = Value
+
+-- Bloom
+zShadersEffects:CreateSlider(" Bloom Intensity", {Min = 0, Max = 100, DefaultValue = math.floor((settings.bloomIntensity or 0) * 100)}, function(Value)
+    settings.bloomIntensity = Value / 100
     if settings.shadersEnabled then UpdateBloom() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" Bloom Size", {Min = 10, Max = 50, DefaultValue = settings.bloomSize}, function(Value)
+zShadersEffects:CreateSlider(" Bloom Size", {Min = 10, Max = 50, DefaultValue = settings.bloomSize}, function(Value)
     settings.bloomSize = Value
     if settings.shadersEnabled then UpdateBloom() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" Bloom Threshold", {Min = 1, Max = 5, DefaultValue = settings.bloomThreshold}, function(Value)
+zShadersEffects:CreateSlider(" Bloom Threshold", {Min = 1, Max = 5, DefaultValue = settings.bloomThreshold}, function(Value)
     settings.bloomThreshold = Value
     if settings.shadersEnabled then UpdateBloom() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" Sun Rays Intensity", {Min = 0, Max = 1, DefaultValue = settings.sunRaysIntensity}, function(Value)
-    settings.sunRaysIntensity = Value
+
+-- Sun rays
+zShadersEffects:CreateSlider(" Sun Rays Intensity", {Min = 0, Max = 100, DefaultValue = math.floor((settings.sunRaysIntensity or 0) * 100)}, function(Value)
+    settings.sunRaysIntensity = Value / 100
     if settings.shadersEnabled then UpdateSunRays() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" Sun Rays Spread", {Min = 0, Max = 1, DefaultValue = settings.sunRaysSpread}, function(Value)
-    settings.sunRaysSpread = Value
+zShadersEffects:CreateSlider(" Sun Rays Spread", {Min = 0, Max = 100, DefaultValue = math.floor((settings.sunRaysSpread or 0) * 100)}, function(Value)
+    settings.sunRaysSpread = Value / 100
     if settings.shadersEnabled then UpdateSunRays() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" DOF Focus Distance", {Min = 0, Max = 200, DefaultValue = settings.dofFocusDistance}, function(Value)
+
+-- DOF section (distance values remain integers)
+zShadersDOF:CreateSlider(" DOF Focus Distance", {Min = 0, Max = 200, DefaultValue = settings.dofFocusDistance}, function(Value)
     settings.dofFocusDistance = Value
     if settings.shadersEnabled then UpdateDOF() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" DOF In Focus Radius", {Min = 0, Max = 300, DefaultValue = settings.dofInFocusRadius}, function(Value)
+zShadersDOF:CreateSlider(" DOF In Focus Radius", {Min = 0, Max = 300, DefaultValue = settings.dofInFocusRadius}, function(Value)
     settings.dofInFocusRadius = Value
     if settings.shadersEnabled then UpdateDOF() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" DOF Near Intensity", {Min = 0, Max = 1, DefaultValue = settings.dofNearIntensity}, function(Value)
-    settings.dofNearIntensity = Value
+zShadersDOF:CreateSlider(" DOF Near Intensity", {Min = 0, Max = 100, DefaultValue = math.floor((settings.dofNearIntensity or 0) * 100)}, function(Value)
+    settings.dofNearIntensity = Value / 100
     if settings.shadersEnabled then UpdateDOF() end
     saveSettings()
 end)
-zShadersSection:CreateSlider(" DOF Far Intensity", {Min = 0, Max = 1, DefaultValue = settings.dofFarIntensity}, function(Value)
-    settings.dofFarIntensity = Value
+zShadersDOF:CreateSlider(" DOF Far Intensity", {Min = 0, Max = 100, DefaultValue = math.floor((settings.dofFarIntensity or 0) * 100)}, function(Value)
+    settings.dofFarIntensity = Value / 100
     if settings.shadersEnabled then UpdateDOF() end
     saveSettings()
 end)
@@ -966,7 +1500,10 @@ settingsTerminateSection:CreateButton("Terminate | Zexon Script", function()
         ToggleDOF(false)
     end
     safeCleanup()
-    print("[zexon] script has been terminated.")
+        local success, err = pcall(collapseCyclone)
+    if not success then
+        warn("[zexon] Cyclone reset error:", err)
+    end
 end)
 spawn(function()
     while true do
