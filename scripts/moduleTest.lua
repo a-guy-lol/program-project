@@ -7,6 +7,7 @@ MoveModule.Config = {
 	arrivalDist = 0.9,
 	faceOrigin = false,
 	smoothRate = 14,
+	lockRotation = true,
 }
 
 MoveModule._conn = nil
@@ -17,6 +18,8 @@ MoveModule._hum = nil
 MoveModule._hrp = nil
 MoveModule._active = false
 MoveModule._target = nil
+MoveModule._rotCF = nil
+MoveModule._orig = nil
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -39,9 +42,20 @@ local function suppressWalk(humanoid)
 	end
 end
 
-function MoveModule:_cleanup()
+function MoveModule:_restoreHumanoid()
+	if not self._hum or not self._orig then
+		return
+	end
+	self._hum.WalkSpeed = self._orig.WalkSpeed
+	self._hum.JumpPower = self._orig.JumpPower
+	self._hum.AutoRotate = self._orig.AutoRotate
+	self._orig = nil
+end
+
+function MoveModule:_cleanup(restore)
 	self._active = false
 	self._target = nil
+	self._rotCF = nil
 
 	if self._conn then
 		self._conn:Disconnect()
@@ -51,6 +65,10 @@ function MoveModule:_cleanup()
 	if self._bv then
 		self._bv:Destroy()
 		self._bv = nil
+	end
+
+	if restore then
+		self:_restoreHumanoid()
 	end
 
 	if self._humDied then
@@ -63,7 +81,7 @@ function MoveModule:_cleanup()
 end
 
 function MoveModule:_bindCharacter(char)
-	self:_cleanup()
+	self:_cleanup(false)
 
 	local hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 5)
 	local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
@@ -75,7 +93,7 @@ function MoveModule:_bindCharacter(char)
 	self._hum = hum
 
 	self._humDied = hum.Died:Connect(function()
-		self:_cleanup()
+		self:_cleanup(false)
 	end)
 end
 
@@ -107,7 +125,7 @@ function MoveModule:SetConfig(cfg)
 end
 
 function MoveModule:Stop()
-	self:_cleanup()
+	self:_cleanup(true)
 end
 
 function MoveModule:Goto(pos)
@@ -119,6 +137,8 @@ function MoveModule:Goto(pos)
 		return false
 	end
 
+	self:Stop()
+
 	self._target = pos
 	self._active = true
 
@@ -126,9 +146,19 @@ function MoveModule:Goto(pos)
 	local hrp = self._hrp
 	local cfg = self.Config
 
+	self._orig = {
+		WalkSpeed = hum.WalkSpeed,
+		JumpPower = hum.JumpPower,
+		AutoRotate = hum.AutoRotate,
+	}
+
 	hum.WalkSpeed = 0
 	hum.JumpPower = 0
 	hum.AutoRotate = false
+
+	if cfg.lockRotation then
+		self._rotCF = hrp.CFrame - hrp.CFrame.Position
+	end
 
 	local bv = Instance.new("BodyVelocity")
 	bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
@@ -137,13 +167,9 @@ function MoveModule:Goto(pos)
 	bv.Parent = hrp
 	self._bv = bv
 
-	if self._conn then
-		self._conn:Disconnect()
-	end
-
 	self._conn = RunService.RenderStepped:Connect(function(dt)
 		if not self._active or not hrp.Parent or not hum.Parent then
-			self:Stop()
+			self:_cleanup(false)
 			return
 		end
 
@@ -152,11 +178,13 @@ function MoveModule:Goto(pos)
 		if cfg.faceOrigin then
 			local looktgt = Vector3.new(0, hrp.Position.Y, 0)
 			hrp.CFrame = CFrame.lookAt(hrp.Position, looktgt)
+		elseif cfg.lockRotation and self._rotCF then
+			hrp.CFrame = CFrame.new(hrp.Position) * self._rotCF
+			hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 		end
 
-		local to3 = self._target - hrp.Position
-		local toXZ = Vector3.new(to3.X, 0, to3.Z)
-		local dist = toXZ.Magnitude
+		local toTarget = self._target - hrp.Position
+		local dist = toTarget.Magnitude
 
 		local desiredSpeed
 		if dist >= cfg.brakeStart then
@@ -166,23 +194,16 @@ function MoveModule:Goto(pos)
 			desiredSpeed = cfg.minSpeed + (cfg.maxSpeed - cfg.minSpeed) * t
 		end
 
-		local vel = hrp.AssemblyLinearVelocity
-		local hVel = Vector3.new(vel.X, 0, vel.Z)
-		local dir = (dist > 0.0001) and toXZ.Unit or Vector3.new(0, 0, 0)
-		local targetHVel = dir * desiredSpeed
+		local dir = (dist > 0.0001) and toTarget.Unit or Vector3.new(0, 0, 0)
+		local targetVel = dir * desiredSpeed
 
 		local lerpT = math.clamp(cfg.smoothRate * dt, 0, 1)
-		local newHVel = v3_lerp(hVel, targetHVel, lerpT)
-
-		bv.Velocity = Vector3.new(newHVel.X, vel.Y, newHVel.Z)
+		bv.Velocity = v3_lerp(bv.Velocity, targetVel, lerpT)
 
 		suppressWalk(hum)
 
 		if dist <= cfg.arrivalDist then
 			self:Stop()
-			hum.WalkSpeed = 16
-			hum.JumpPower = 50
-			hum.AutoRotate = true
 		end
 	end)
 
