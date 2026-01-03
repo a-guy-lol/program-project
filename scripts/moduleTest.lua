@@ -107,8 +107,6 @@ function MoveModule:_RestoreHumanoid()
 end
 
 function MoveModule:_StopMovement(restoreHumanoid)
-	self._targetPosition = nil
-
 	if self._renderConnection then
 		self._renderConnection:Disconnect()
 		self._renderConnection = nil
@@ -125,6 +123,7 @@ function MoveModule:_StopMovement(restoreHumanoid)
 end
 
 function MoveModule:_UnbindCharacter()
+	self:StopGoto()
 	self:_StopMovement(false)
 	self:_StopNoclip()
 
@@ -136,6 +135,7 @@ function MoveModule:_UnbindCharacter()
 	self._humanoid = nil
 	self._humanoidRootPart = nil
 	self._originalHumanoidProperties = nil
+	self._enabled = false
 end
 
 function MoveModule:_BindCharacter(character)
@@ -185,9 +185,16 @@ end
 
 function MoveModule:Enable()
 	self:_EnsureBound()
-	if self._enabled then
+
+	-- If already enabled and BV exists, do nothing
+	if self._enabled and self._bodyVelocity and self._bodyVelocity.Parent then
 		return true
 	end
+
+	-- If enabled flag is true but BV is missing, rebuild it
+	self._enabled = false
+	self:_StopMovement(false)
+
 	if not self._humanoid or not self._humanoidRootPart then
 		return false
 	end
@@ -213,7 +220,6 @@ function MoveModule:Enable()
 	self._bodyVelocity = bodyVelocity
 
 	self._enabled = true
-	self._targetPosition = nil
 
 	self._renderConnection = RunService.RenderStepped:Connect(function(deltaTime)
 		if not self._enabled or not self._bodyVelocity or not self._humanoidRootPart or not self._humanoid then
@@ -262,7 +268,7 @@ end
 
 function MoveModule:Goto(targetPosition)
 	self:_EnsureBound()
-	if not self._enabled then
+	if not self._enabled or not self._bodyVelocity or not self._bodyVelocity.Parent then
 		return false
 	end
 	if typeof(targetPosition) ~= "Vector3" then
@@ -272,12 +278,19 @@ function MoveModule:Goto(targetPosition)
 	return true
 end
 
+function MoveModule:StopGoto()
+	self._targetPosition = nil
+	if self._enabled and self._bodyVelocity and self._bodyVelocity.Parent then
+		self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+	end
+end
+
 function MoveModule:Disable()
 	if not self._enabled then
 		return
 	end
-
 	self._enabled = false
+	self:StopGoto()
 	self:_StopMovement(true)
 	self:_StopNoclip()
 end
