@@ -1,18 +1,20 @@
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-local FlingLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/flingPlayerModule.lua"))()
+local FlingLib = loadstring(game:HttpGet("YOUR_RAW_MODULE_URL_HERE"))()
 
 local TargetUsername = "TargetUser"
+local MaxTime = 5
+local DetectIfFlung = true
 
 local TargetPlayer
-for _, Player in ipairs(Players:GetPlayers()) do
-	if Player ~= LocalPlayer and (Player.Name == TargetUsername or Player.DisplayName == TargetUsername) then
-		TargetPlayer = Player
+for _, player in ipairs(Players:GetPlayers()) do
+	if player ~= LocalPlayer and (player.Name == TargetUsername or player.DisplayName == TargetUsername) then
+		TargetPlayer = player
 		break
 	end
 end
 
 if TargetPlayer then
-	FlingLib:Fling(TargetPlayer, 5, true)
+	FlingLib:Fling(TargetPlayer, MaxTime, DetectIfFlung)
 end
