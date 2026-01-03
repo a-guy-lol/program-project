@@ -1,31 +1,19 @@
+-- This script lives on a web server (e.g., GitHub)
+local MathLib = {}
 
-local MathModule = {}
-
-function MathModule.Add(a, b)
-	return a + b
+-- A function within the library that takes parameters
+function MathLib:AddNumbers(a, b)
+    local result = a + b
+    print("Module: Adding " .. a .. " + " .. b .. " = " .. result)
+    return result
 end
 
-function MathModule.Multiply(a, b)
-	return a * b
+-- Another function to calculate area
+function MathLib:CalculateArea(length, width)
+    local area = length * width
+    print("Module: Area is " .. area)
+    return area
 end
 
-function MathModule.Power(base, exponent)
-	-- simple integer exponent example
-	local result = 1
-	for _ = 1, exponent do
-		result *= base
-	end
-	return result
-end
-
-function MathModule.Stats(numbers)
-	-- returns sum and average
-	local sum = 0
-	for _, n in ipairs(numbers) do
-		sum += n
-	end
-	local avg = (#numbers > 0) and (sum / #numbers) or 0
-	return sum, avg
-end
-
-return MathModule
+-- CRITICAL: The script must return the table so the loader can use it
+return MathLib
