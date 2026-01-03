@@ -6,6 +6,8 @@ MoveModule.Config = {
 	brakeStart = 50,
 	arrivalDist = 0.9,
 	smoothRate = 14,
+	stopSpeed = 2,
+	arrivalHold = 0.08,
 }
 
 local Players = game:GetService("Players")
@@ -27,6 +29,12 @@ MoveModule._originalHumanoidProperties = nil
 
 MoveModule._noclipConnection = nil
 MoveModule._noclipOriginal = {}
+
+MoveModule.Reached = Instance.new("BindableEvent")
+MoveModule.Stopped = Instance.new("BindableEvent")
+
+MoveModule._moveId = 0
+MoveModule._arriveTimer = 0
 
 local function Vector3Lerp(fromVector, toVector, alpha)
 	return fromVector + (toVector - fromVector) * alpha
@@ -123,7 +131,7 @@ function MoveModule:_StopMovement(restoreHumanoid)
 end
 
 function MoveModule:_UnbindCharacter()
-	self:StopGoto()
+	self:StopGoto(true)
 	self:_StopMovement(false)
 	self:_StopNoclip()
 
@@ -186,12 +194,10 @@ end
 function MoveModule:Enable()
 	self:_EnsureBound()
 
-	-- If already enabled and BV exists, do nothing
 	if self._enabled and self._bodyVelocity and self._bodyVelocity.Parent then
 		return true
 	end
 
-	-- If enabled flag is true but BV is missing, rebuild it
 	self._enabled = false
 	self:_StopMovement(false)
 
@@ -220,6 +226,7 @@ function MoveModule:Enable()
 	self._bodyVelocity = bodyVelocity
 
 	self._enabled = true
+	self._arriveTimer = 0
 
 	self._renderConnection = RunService.RenderStepped:Connect(function(deltaTime)
 		if not self._enabled or not self._bodyVelocity or not self._humanoidRootPart or not self._humanoid then
@@ -230,18 +237,24 @@ function MoveModule:Enable()
 			return
 		end
 
-		deltaTime = math.max(deltaTime, 1 / 120)
+		deltaTime = math.max(deltaTime, 1 / 240)
 
 		self:_LockRotation()
 		SuppressWalkAnimations(self._humanoid)
 
 		if not self._targetPosition then
+			self._arriveTimer = 0
 			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
 			return
 		end
 
 		local toTarget = self._targetPosition - self._humanoidRootPart.Position
 		local distance = toTarget.Magnitude
+
+		local currentVelocity = self._bodyVelocity.Velocity
+		local currentSpeed = currentVelocity.Magnitude
+
+		local direction = (distance > 0.0001) and toTarget.Unit or Vector3.new(0, 0, 0)
 
 		local desiredSpeed
 		if distance >= self.Config.brakeStart then
@@ -251,15 +264,31 @@ function MoveModule:Enable()
 			desiredSpeed = self.Config.minSpeed + (self.Config.maxSpeed - self.Config.minSpeed) * t
 		end
 
-		local direction = (distance > 0.0001) and toTarget.Unit or Vector3.new(0, 0, 0)
+		if distance <= (self.Config.arrivalDist * 2) then
+			local scaled = (distance / math.max(self.Config.arrivalDist * 2, 0.0001))
+			desiredSpeed = math.min(desiredSpeed, self.Config.maxSpeed * scaled)
+		end
+
 		local targetVelocity = direction * desiredSpeed
 
 		local lerpAlpha = math.clamp(self.Config.smoothRate * deltaTime, 0, 1)
-		self._bodyVelocity.Velocity = Vector3Lerp(self._bodyVelocity.Velocity, targetVelocity, lerpAlpha)
+		self._bodyVelocity.Velocity = Vector3Lerp(currentVelocity, targetVelocity, lerpAlpha)
 
-		if distance <= self.Config.arrivalDist then
-			self._targetPosition = nil
-			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+		local arrivedDist = distance <= self.Config.arrivalDist
+		local arrivedSpeed = currentSpeed <= self.Config.stopSpeed
+
+		if arrivedDist and arrivedSpeed then
+			self._arriveTimer += deltaTime
+			if self._arriveTimer >= self.Config.arrivalHold then
+				local finishedMoveId = self._moveId
+				local finishedTarget = self._targetPosition
+				self._targetPosition = nil
+				self._arriveTimer = 0
+				self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+				self.Reached:Fire(finishedMoveId, finishedTarget)
+			end
+		else
+			self._arriveTimer = 0
 		end
 	end)
 
@@ -274,14 +303,50 @@ function MoveModule:Goto(targetPosition)
 	if typeof(targetPosition) ~= "Vector3" then
 		return false
 	end
+	self._moveId += 1
 	self._targetPosition = targetPosition
-	return true
+	self._arriveTimer = 0
+	return self._moveId
 end
 
-function MoveModule:StopGoto()
+function MoveModule:GotoAsync(targetPosition, timeoutSeconds)
+	local moveId = self:Goto(targetPosition)
+	if not moveId then
+		return false
+	end
+
+	local startTime = os.clock()
+	while self._enabled and self._bodyVelocity and self._bodyVelocity.Parent do
+		if timeoutSeconds and (os.clock() - startTime) >= timeoutSeconds then
+			if self._moveId == moveId then
+				self:StopGoto(true)
+			end
+			return false
+		end
+
+		if self._moveId ~= moveId then
+			return false
+		end
+
+		if not self._targetPosition and self._moveId == moveId then
+			return true
+		end
+
+		RunService.Heartbeat:Wait()
+	end
+
+	return false
+end
+
+function MoveModule:StopGoto(fireStopped)
+	local stoppedMoveId = self._moveId
 	self._targetPosition = nil
+	self._arriveTimer = 0
 	if self._enabled and self._bodyVelocity and self._bodyVelocity.Parent then
 		self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+	end
+	if fireStopped then
+		self.Stopped:Fire(stoppedMoveId)
 	end
 end
 
@@ -290,7 +355,7 @@ function MoveModule:Disable()
 		return
 	end
 	self._enabled = false
-	self:StopGoto()
+	self:StopGoto(false)
 	self:_StopMovement(true)
 	self:_StopNoclip()
 end
