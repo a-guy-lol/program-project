@@ -1,13 +1,10 @@
--- v0.1
 local MoveModule = {}
 
 MoveModule.Config = {
-	minSpeed = 18.5,
-	maxSpeed = 80,
-	brakeStart = 35,
+	minSpeed = 20,
+	maxSpeed = 50,
+	brakeStart = 50,
 	arrivalDist = 0.9,
-	lockRotation = true,
-	faceOrigin = false,
 	smoothRate = 14,
 }
 
@@ -15,211 +12,218 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
-MoveModule._renderConnection = nil
-MoveModule._bodyVelocity = nil
-MoveModule._diedConnection = nil
-MoveModule._characterAddedConnection = nil
+MoveModule._charAdded = nil
+MoveModule._died = nil
+MoveModule._rs = nil
 
-MoveModule._humanoid = nil
-MoveModule._humanoidRootPart = nil
-MoveModule._active = false
-MoveModule._targetPosition = nil
-MoveModule._rotationOnlyCFrame = nil
-MoveModule._originalHumanoidProperties = nil
+MoveModule._hum = nil
+MoveModule._hrp = nil
 
-local function Vector3Lerp(fromVector, toVector, alpha)
-	return fromVector + (toVector - fromVector) * alpha
+MoveModule._bv = nil
+MoveModule._enabled = false
+MoveModule._target = nil
+
+MoveModule._orig = nil
+
+local function v3_lerp(a, b, t)
+	return a + (b - a) * t
 end
 
-local function SuppressWalkAnimations(humanoid)
-	for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
-		local trackName = (track.Name or ""):lower()
-		local animationId = ""
-		if track.Animation and type(track.Animation.AnimationId) == "string" then
-			animationId = track.Animation.AnimationId:lower()
+local function suppressWalk(h)
+	for _, tr in ipairs(h:GetPlayingAnimationTracks()) do
+		local n = (tr.Name or ""):lower()
+		local id = ""
+		if tr.Animation and type(tr.Animation.AnimationId) == "string" then
+			id = tr.Animation.AnimationId:lower()
 		end
-		if trackName:match("walk") or trackName:match("run") or animationId:match("walk") or animationId:match("run") then
-			track:Stop(0.05)
+		if n:match("walk") or n:match("run") or id:match("walk") or id:match("run") then
+			tr:Stop(0.05)
 		end
 	end
 end
 
-function MoveModule:_RestoreHumanoid()
-	if not self._humanoid or not self._originalHumanoidProperties then
-		return
-	end
-	self._humanoid.WalkSpeed = self._originalHumanoidProperties.WalkSpeed
-	self._humanoid.JumpPower = self._originalHumanoidProperties.JumpPower
-	self._humanoid.AutoRotate = self._originalHumanoidProperties.AutoRotate
-	self._originalHumanoidProperties = nil
-end
+function MoveModule:_bind(c)
+	self:_unbind()
 
-function MoveModule:_StopMovement(restoreHumanoid)
-	self._active = false
-	self._targetPosition = nil
-	self._rotationOnlyCFrame = nil
-
-	if self._renderConnection then
-		self._renderConnection:Disconnect()
-		self._renderConnection = nil
-	end
-
-	if self._bodyVelocity then
-		self._bodyVelocity:Destroy()
-		self._bodyVelocity = nil
-	end
-
-	if restoreHumanoid then
-		self:_RestoreHumanoid()
-	end
-end
-
-function MoveModule:_UnbindCharacter()
-	self:_StopMovement(false)
-
-	if self._diedConnection then
-		self._diedConnection:Disconnect()
-		self._diedConnection = nil
-	end
-
-	self._humanoid = nil
-	self._humanoidRootPart = nil
-	self._originalHumanoidProperties = nil
-end
-
-function MoveModule:_BindCharacter(character)
-	self:_UnbindCharacter()
-
-	local humanoidRootPart = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 5)
-	local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 5)
-	if not humanoidRootPart or not humanoid then
+	local hrp = c:FindFirstChild("HumanoidRootPart") or c:WaitForChild("HumanoidRootPart", 5)
+	local hum = c:FindFirstChildOfClass("Humanoid") or c:WaitForChild("Humanoid", 5)
+	if not hrp or not hum then
 		return
 	end
 
-	self._humanoidRootPart = humanoidRootPart
-	self._humanoid = humanoid
+	self._hrp = hrp
+	self._hum = hum
 
-	self._diedConnection = humanoid.Died:Connect(function()
-		self:_UnbindCharacter()
+	self._died = hum.Died:Connect(function()
+		self:Disable()
+		self:_unbind()
 	end)
 end
 
-function MoveModule:_EnsureBound()
-	local character = LocalPlayer.Character
-	if character and character.Parent then
-		if not self._humanoid or not self._humanoidRootPart then
-			self:_BindCharacter(character)
+function MoveModule:_unbind()
+	if self._died then
+		self._died:Disconnect()
+		self._died = nil
+	end
+	self._hum = nil
+	self._hrp = nil
+end
+
+function MoveModule:_ensure()
+	local c = LocalPlayer.Character
+	if c and c.Parent then
+		if not self._hrp or not self._hum then
+			self:_bind(c)
 		end
 	end
 
-	if not self._characterAddedConnection then
-		self._characterAddedConnection = LocalPlayer.CharacterAdded:Connect(function(newCharacter)
-			self:_BindCharacter(newCharacter)
+	if not self._charAdded then
+		self._charAdded = LocalPlayer.CharacterAdded:Connect(function(nc)
+			self:_bind(nc)
 		end)
 	end
 end
 
-function MoveModule:SetConfig(configurationTable)
-	self:_EnsureBound()
-	if type(configurationTable) ~= "table" then
+function MoveModule:SetConfig(cfg)
+	self:_ensure()
+	if type(cfg) ~= "table" then
 		return
 	end
-	for key, value in pairs(configurationTable) do
-		if self.Config[key] ~= nil then
-			self.Config[key] = value
+	for k, v in pairs(cfg) do
+		if self.Config[k] ~= nil then
+			self.Config[k] = v
 		end
 	end
 end
 
-function MoveModule:Stop()
-	self:_StopMovement(true)
+function MoveModule:_restoreHum()
+	if not self._hum or not self._orig then
+		self._orig = nil
+		return
+	end
+	self._hum.WalkSpeed = self._orig.WalkSpeed
+	self._hum.JumpPower = self._orig.JumpPower
+	self._hum.AutoRotate = self._orig.AutoRotate
+	self._orig = nil
 end
 
-function MoveModule:Goto(targetPosition)
-	self:_EnsureBound()
-	if typeof(targetPosition) ~= "Vector3" then
+function MoveModule:_lockRot()
+	if not self._hrp then
+		return
+	end
+	local p = self._hrp.Position
+	self._hrp.CFrame = CFrame.new(p)
+	self._hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+end
+
+function MoveModule:Enable()
+	self:_ensure()
+	if self._enabled then
+		return true
+	end
+	if not self._hrp or not self._hum then
 		return false
 	end
-	if not self._humanoid or not self._humanoidRootPart then
-		return false
-	end
 
-	self:_StopMovement(true)
-
-	self._active = true
-	self._targetPosition = targetPosition
-
-	local humanoid = self._humanoid
-	local humanoidRootPart = self._humanoidRootPart
-	local configuration = self.Config
-
-	self._originalHumanoidProperties = {
-		WalkSpeed = humanoid.WalkSpeed,
-		JumpPower = humanoid.JumpPower,
-		AutoRotate = humanoid.AutoRotate,
+	-- Save humanoid defaults, then disable controller movement
+	self._orig = {
+		WalkSpeed = self._hum.WalkSpeed,
+		JumpPower = self._hum.JumpPower,
+		AutoRotate = self._hum.AutoRotate,
 	}
 
-	humanoid.WalkSpeed = 0
-	humanoid.JumpPower = 0
-	humanoid.AutoRotate = false
+	self._hum.WalkSpeed = 0
+	self._hum.JumpPower = 0
+	self._hum.AutoRotate = false
 
-	if configuration.lockRotation then
-		local currentCFrame = humanoidRootPart.CFrame
-		self._rotationOnlyCFrame = currentCFrame - currentCFrame.Position
-	end
+	-- Create BV; starts frozen if no target is set
+	local bv = Instance.new("BodyVelocity")
+	bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+	bv.P = 1250
+	bv.Velocity = Vector3.new(0, 0, 0)
+	bv.Parent = self._hrp
+	self._bv = bv
 
-	local bodyVelocity = Instance.new("BodyVelocity")
-	bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-	bodyVelocity.P = 1250
-	bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-	bodyVelocity.Parent = humanoidRootPart
-	self._bodyVelocity = bodyVelocity
+	self._enabled = true
+	self._target = nil
 
-	self._renderConnection = RunService.RenderStepped:Connect(function(deltaTime)
-		if not self._active then
+	-- Keep rotation at 0,0,0 and drive velocity toward target (or hold still)
+	self._rs = RunService.RenderStepped:Connect(function(dt)
+		if not self._enabled or not self._bv or not self._hrp or not self._hum then
 			return
 		end
-		if not humanoidRootPart.Parent or not humanoid.Parent then
-			self:_StopMovement(true)
+		if not self._hrp.Parent or not self._hum.Parent then
+			self:Disable()
 			return
 		end
 
-		deltaTime = math.max(deltaTime, 1 / 120)
+		dt = math.max(dt, 1/120)
 
-		if configuration.faceOrigin then
-			local lookTarget = Vector3.new(0, humanoidRootPart.Position.Y, 0)
-			humanoidRootPart.CFrame = CFrame.lookAt(humanoidRootPart.Position, lookTarget)
-			humanoidRootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-		elseif configuration.lockRotation and self._rotationOnlyCFrame then
-			humanoidRootPart.CFrame = CFrame.new(humanoidRootPart.Position) * self._rotationOnlyCFrame
-			humanoidRootPart.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		self:_lockRot()
+		suppressWalk(self._hum)
+
+		if not self._target then
+			self._bv.Velocity = Vector3.new(0, 0, 0)
+			return
 		end
 
-		local toTarget = self._targetPosition - humanoidRootPart.Position
-		local distance = toTarget.Magnitude
+		local to = self._target - self._hrp.Position
+		local dist = to.Magnitude
 
-		local desiredSpeed
-		if distance >= configuration.brakeStart then
-			desiredSpeed = configuration.maxSpeed
+		local sp
+		if dist >= self.Config.brakeStart then
+			sp = self.Config.maxSpeed
 		else
-			local t = math.clamp(distance / math.max(configuration.brakeStart, 0.0001), 0, 1)
-			desiredSpeed = configuration.minSpeed + (configuration.maxSpeed - configuration.minSpeed) * t
+			local t = math.clamp(dist / math.max(self.Config.brakeStart, 0.0001), 0, 1)
+			sp = self.Config.minSpeed + (self.Config.maxSpeed - self.Config.minSpeed) * t
 		end
 
-		local direction = (distance > 0.0001) and toTarget.Unit or Vector3.new(0, 0, 0)
-		local targetVelocity = direction * desiredSpeed
+		local dir = (dist > 0.0001) and to.Unit or Vector3.new(0, 0, 0)
+		local tv = dir * sp
 
-		local lerpAlpha = math.clamp(configuration.smoothRate * deltaTime, 0, 1)
-		bodyVelocity.Velocity = Vector3Lerp(bodyVelocity.Velocity, targetVelocity, lerpAlpha)
+		local a = math.clamp(self.Config.smoothRate * dt, 0, 1)
+		self._bv.Velocity = v3_lerp(self._bv.Velocity, tv, a)
 
-		SuppressWalkAnimations(humanoid)
-
-		if distance <= configuration.arrivalDist then
-			self:_StopMovement(true)
+		if dist <= self.Config.arrivalDist then
+			self._target = nil
+			self._bv.Velocity = Vector3.new(0, 0, 0)
 		end
 	end)
 
 	return true
+end
+
+function MoveModule:Goto(pos)
+	self:_ensure()
+	if not self._enabled then
+		return false
+	end
+	if typeof(pos) ~= "Vector3" then
+		return false
+	end
+	self._target = pos
+	return true
+end
+
+function MoveModule:Disable()
+	if not self._enabled then
+		return
+	end
+
+	self._enabled = false
+	self._target = nil
+
+	if self._rs then
+		self._rs:Disconnect()
+		self._rs = nil
+	end
+
+	if self._bv then
+		self._bv:Destroy()
+		self._bv = nil
+	end
+
+	self:_restoreHum()
 end
 
 return MoveModule
