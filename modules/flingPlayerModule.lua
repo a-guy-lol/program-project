@@ -1,118 +1,165 @@
-local FlingModule = {}
+local FlingLib = {}
 
--- // CONFIGURATION //
-FlingModule.Config = {
-    FlingVelocity = Vector3.new(9e8, 9e8, 9e8), -- The physics force
-    RotVelocity = Vector3.new(9e8, 9e8, 9e8),   -- The spin force
-    Threshold = 200 -- Velocity (studs/sec) to consider the target "flung"
+-- [[ CONFIGURATION ]] --
+local Config = {
+    Velocity = Vector3.new(9e8, 9e8, 9e8), -- Do not touch (Original script value)
+    RotVelocity = Vector3.new(9e8, 9e8, 9e8), -- Do not touch
+    FlungThreshold = 200 -- Studs per second to consider "Flung" (for the 'dif' parameter)
 }
 
--- // VARIABLES //
+-- [[ STATE TRACKING ]] --
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
+local CurrentFlingId = 0 -- Used to cancel previous flings
 
--- Defines the current active fling job. 
--- Changing this variable automatically stops any previous running loops.
-local CurrentJobId = nil 
-
-function FlingModule:Fling(targetPlayer, duration, detectFlung)
-    -- 1. Generate a unique ID for this specific function call
-    local thisJobId = game:GetService("HttpService"):GenerateGUID(false)
-    CurrentJobId = thisJobId
-
-    -- 2. Validation
-    if not targetPlayer or not LocalPlayer.Character then return end
+function FlingLib:Fling(TargetPlayer, Time, Dif)
+    -- Increment ID to invalidate any previous running flings
+    CurrentFlingId = CurrentFlingId + 1
+    local MyFlingId = CurrentFlingId
     
-    local myChar = LocalPlayer.Character
-    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-    local myHumanoid = myChar:FindFirstChild("Humanoid")
+    local StartTime = tick()
     
-    if not myRoot or not myHumanoid then return end
-
-    -- 3. Save State & Setup Physics
-    local originalPos = myRoot.CFrame
-    local startTime = tick()
+    -- Basic checks
+    if not TargetPlayer or not TargetPlayer.Character or not LocalPlayer.Character then return end
     
-    -- Create Force
-    local bv = Instance.new("BodyVelocity")
-    bv.Name = "FlingVelocity"
-    bv.Parent = myRoot
-    bv.Velocity = Vector3.zero 
-    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    local Character = LocalPlayer.Character
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Humanoid and Humanoid.RootPart
+    
+    local TCharacter = TargetPlayer.Character
+    local THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
+    local TRootPart = THumanoid and THumanoid.RootPart
+    local THead = TCharacter:FindFirstChild("Head")
+    
+    -- Determine target part (Logic from original script)
+    local TargetPart = TRootPart or THead or TCharacter:FindFirstChildWhichIsA("BasePart")
+    
+    if not Character or not Humanoid or not RootPart or not TargetPart then return end
+    
+    -- Setup Old Position for return
+    local OldPos = RootPart.CFrame
+    local OriginalFPDH = workspace.FallenPartsDestroyHeight
+    
+    -- [[ FLING MECHANIC SETUP ]] --
+    workspace.FallenPartsDestroyHeight = 0/0
+    
+    local BV = Instance.new("BodyVelocity")
+    BV.Name = "EpixVel"
+    BV.Parent = RootPart
+    BV.Velocity = Config.Velocity
+    BV.MaxForce = Vector3.new(1/0, 1/0, 1/0)
+    
+    Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+    
+    -- Camera Lock
+    if THumanoid then
+        workspace.CurrentCamera.CameraSubject = THumanoid
+    elseif TargetPart then
+         workspace.CurrentCamera.CameraSubject = TargetPart
+    end
 
-    -- Bypass Fallen Parts
-    local originalFallenHeight = workspace.FallenPartsDestroyHeight
-    workspace.FallenPartsDestroyHeight = 0/0 -- NaN
+    -- [[ FPOS FUNCTION (UNALTERED MATH) ]] --
+    local function FPos(BasePart, Pos, Ang)
+        RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
+        Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
+        RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+        RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+    end
 
-    -- 4. The Loop
-    local connection
-    connection = RunService.RenderStepped:Connect(function()
-        -- A. Stop if a new fling command was called (Override)
-        if CurrentJobId ~= thisJobId then
-            connection:Disconnect()
-            -- We do NOT cleanup here, we assume the new job takes over control
-            return 
-        end
-
-        -- B. Target Validation
-        local tChar = targetPlayer.Character
-        local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+    -- [[ MAIN LOOP ]] --
+    local Angle = 0
+    
+    repeat
+        -- 1. Check Cancellation (New Fling Started)
+        if CurrentFlingId ~= MyFlingId then break end
         
-        if not tChar or not tRoot or not targetPlayer.Parent then
-            connection:Disconnect()
-            FlingModule:_Cleanup(originalPos, originalFallenHeight, bv)
-            return
-        end
+        -- 2. Check Time
+        if (tick() - StartTime) > Time then break end
+        
+        -- 3. Check Death/Existence
+        if not TargetPlayer.Parent or not TCharacter.Parent or (THumanoid and THumanoid.Health <= 0) then break end
+        if not Character.Parent or (Humanoid and Humanoid.Health <= 0) then break end
 
-        -- C. Time Limit Check
-        if tick() - startTime > duration then
-            connection:Disconnect()
-            FlingModule:_Cleanup(originalPos, originalFallenHeight, bv)
-            return
-        end
+        -- 4. Check "Dif" (Detect if Flung)
+        if Dif and TargetPart.Velocity.Magnitude > Config.FlungThreshold then break end
 
-        -- D. Velocity Check (Did we fling them?)
-        if detectFlung and tRoot.Velocity.Magnitude > FlingModule.Config.Threshold then
-            connection:Disconnect()
-            FlingModule:_Cleanup(originalPos, originalFallenHeight, bv)
-            return
+        -- [[ FLING SEQUENCE (Original Logic) ]] --
+        if RootPart and THumanoid then
+             if TargetPart.Velocity.Magnitude < 50 then
+                Angle = Angle + 100
+                
+                -- Sequence of teleports from original script
+                FPos(TargetPart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * TargetPart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0 ,0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * TargetPart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(2.25, 1.5, -2.25) + THumanoid.MoveDirection * TargetPart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(-2.25, -1.5, 2.25) + THumanoid.MoveDirection * TargetPart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection,CFrame.Angles(math.rad(Angle), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection,CFrame.Angles(math.rad(Angle), 0, 0))
+                task.wait()
+            else
+                -- High velocity chase sequence
+                FPos(TargetPart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, 1.5, TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, -1.5, -TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(0, 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, 1.5, TRootPart.Velocity.Magnitude / 1.25), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, -1.5 ,0), CFrame.Angles(math.rad(-90), 0, 0))
+                task.wait()
+                
+                FPos(TargetPart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                task.wait()
+            end
+        else
+            break
         end
+    until false -- Breaks are handled at the start of loop
 
-        -- E. Physics Logic (The Fling)
-        -- We sit inside the target and rotate violently
-        if myRoot and tRoot then
-            bv.Velocity = FlingModule.Config.FlingVelocity
-            myRoot.RotVelocity = FlingModule.Config.RotVelocity
-            
-            -- Teleport inside them with rotation
-            local angle = (tick() * 10) % 360
-            myRoot.CFrame = tRoot.CFrame * CFrame.Angles(math.rad(angle), math.rad(angle), 0)
-            
-            -- Prevent Sitting
-            myHumanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+    -- [[ CLEANUP ]] --
+    if BV then BV:Destroy() end
+    Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+    workspace.CurrentCamera.CameraSubject = Humanoid
+    workspace.FallenPartsDestroyHeight = OriginalFPDH
+    
+    -- Reset Character
+    RootPart.CFrame = OldPos * CFrame.new(0, .5, 0)
+    Character:SetPrimaryPartCFrame(OldPos * CFrame.new(0, .5, 0))
+    Humanoid:ChangeState("GettingUp")
+    
+    -- Stop velocity on self
+    for _, x in ipairs(Character:GetChildren()) do
+        if x:IsA("BasePart") then
+            x.Velocity, x.RotVelocity = Vector3.new(), Vector3.new()
         end
-    end)
+    end
 end
 
--- // CLEANUP HELPER //
-function FlingModule:_Cleanup(restorePos, restoreHeight, velocityObj)
-    if velocityObj then velocityObj:Destroy() end
-    workspace.FallenPartsDestroyHeight = restoreHeight
-    
-    local myChar = LocalPlayer.Character
-    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    local myHum = myChar and myChar:FindFirstChild("Humanoid")
-    
-    if myRoot and restorePos then
-        myRoot.Velocity = Vector3.zero
-        myRoot.RotVelocity = Vector3.zero
-        myRoot.CFrame = restorePos
-    end
-    
-    if myHum then
-        myHum:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-    end
-end
-
-return FlingModule
+return FlingLib
