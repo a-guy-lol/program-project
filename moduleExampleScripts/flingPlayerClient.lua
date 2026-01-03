@@ -1,7 +1,7 @@
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
-local FlingLib = loadstring(game:HttpGet("YOUR_RAW_MODULE_URL_HERE"))()
+local FlingLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/flingPlayerModule.lua"))()
 
 local TargetUsername = "TargetUser"
 local MaxTime = 5
