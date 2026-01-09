@@ -1011,7 +1011,7 @@ end
 -- #########################################################
 -- ######################## UI Setup #######################
 -- #########################################################
-local uilibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/zexonMain/zexonUI.lua"))()
+local uilibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/zexonUI.lua"))()
 local windowz = uilibrary:CreateWindow("                                                   Zexon V1.4", "(Zyrex)", true)
 -- #########################################################
 -- ######################## Info Page ######################
