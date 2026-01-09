@@ -1,61 +1,97 @@
+-- [ Services ]
 local RbxAnalyticsService = game:GetService("RbxAnalyticsService")
 local HttpService = game:GetService("HttpService")
 
-local SERVER_URL = "wss://api.zexon.workers.dev"
+-- [ Configuration ]
+local SERVER_URL = "wss://api.zexon.workers.dev" -- Your Worker URL
 
+-- [ 1. Read Global Configuration ]
 local userKey = _G.Key
-local scriptId = _G.ScriptID or "1" -- Default to script "1" if they don't provide an ID
+local scriptId = _G.ScriptID or "1" 
 
+-- [ 2. Validation ]
 if not userKey or userKey == "" then
     warn("❌ Error: _G.Key is missing!")
-    warn("Usage: _G.Key = 'YOUR_KEY_HERE'; loadstring(...)()")
-    return -- Stop execution if no key is provided
+    return
 end
 
+-- [ Helper: Get HWID ]
 local function getHwid()
-    return RbxAnalyticsService:GetClientId()
+    -- Safety check: ensure the service exists and returns a value
+    local success, hwid = pcall(function()
+        return RbxAnalyticsService:GetClientId()
+    end)
+    if success and hwid then
+        return hwid
+    end
+    return "Unknown-HWID"
 end
 
-print("🔄 Connecting to Zexon Server...")
+print("🔄 Connecting to Server...")
+
+-- [ 3. WebSocket Connection ]
+if not getgenv().WebSocket then
+    warn("❌ Error: Your executor does not support 'WebSocket' (sUNC standard).")
+    return
+end
 
 local success, ws = pcall(function()
     return WebSocket.connect(SERVER_URL)
 end)
 
 if not success or not ws then
-    warn("❌ Connection Failed. Ensure your executor supports 'WebSocket.connect'.")
+    warn("❌ Connection Failed:", ws)
     return
 end
 
+-- [ 4. Handle Messages ]
 ws.OnMessage:Connect(function(message)
-    local response = HttpService:JSONDecode(message)
+    -- Safety Check: Decode JSON safely
+    local decodeSuccess, response = pcall(function()
+        return HttpService:JSONDecode(message)
+    end)
+
+    if not decodeSuccess then
+        warn("❌ Failed to decode server response.")
+        return
+    end
 
     if response.status == "success" then
         print("✅ Authentication Successful!")
-        print("⏳ Key Expires at:", os.date("%c", response.expiresAt / 1000))
         
-        [cite_start]-- Close the socket to save resources [cite: 789]
+        -- FIXED: Check if expiresAt exists before doing math on it
+        if response.expiresAt then
+            print("⏳ Key Expires at:", os.date("%c", response.expiresAt / 1000))
+        else
+            print("⏳ Key Expires at: Never / Unknown")
+        end
+        
         ws:Close()
 
-        -- Run the protected script sent by the server
-        local chunk, err = loadstring(response.script)
-        if chunk then
-            task.spawn(chunk)
+        -- FIXED: Check if script exists before loading
+        if response.script and response.script ~= "" then
+            local chunk, err = loadstring(response.script)
+            if chunk then
+                task.spawn(chunk)
+            else
+                warn("⚠️ Failed to compile received script:", err)
+            end
         else
-            warn("⚠️ Failed to compile received script:", err)
+            warn("⚠️ Server responded with success, but no script was found.")
         end
 
     elseif response.status == "error" then
-        warn("⛔ Authentication Failed:", response.message)
+        warn("⛔ Authentication Failed:", response.message or "Unknown Error")
         ws:Close()
     end
 end)
 
+-- [ Handle Disconnection ]
 ws.OnClose:Connect(function()
     print("🔌 Connection closed.")
 end)
 
-[cite_start]-- Send the key found in _G to the server [cite: 786]
+-- [ 5. Send Authentication Payload ]
 local payload = {
     type = "auth",
     key = userKey,
