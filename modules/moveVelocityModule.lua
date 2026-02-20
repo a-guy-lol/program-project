@@ -4,11 +4,10 @@ MoveModule.Config = {
 	minSpeed = 20,
 	maxSpeed = 50,
 	brakeStart = 50,
-	arrivalDist = 0.01,
+	arrivalDist = 0.9,
 	smoothRate = 14,
-	-- Kept for compatibility with existing scripts; these are not used for positional snapping.
-	snapDist = 0,
-	snapEpsilon = 0,
+	snapDist = 1.25,
+	snapEpsilon = 0.02,
 }
 
 local Players = game:GetService("Players")
@@ -34,14 +33,15 @@ MoveModule._originalHumanoidProperties = nil
 MoveModule._noclipConnection = nil
 MoveModule._noclipOriginal = {}
 
-local MIN_FINISH_DIST = 0.001
-local MIN_PROGRESS_DELTA = 0.001
-local STALL_TIMEOUT = 0.35
-local STALL_DIST = 3
-
 local function Vector3Lerp(a, b, t)
 	return a + (b - a) * t
 end
+
+local MIN_SNAP_DIST = 0.06
+local MIN_SNAP_EPSILON = 0.003
+local MIN_ARRIVAL_DIST = 0.03
+local STALL_TIMEOUT = 0.22
+local STALL_DIST = 0.35
 
 local function SuppressWalkAnimations(h)
 	for _, tr in ipairs(h:GetPlayingAnimationTracks()) do
@@ -69,23 +69,25 @@ function MoveModule:_StartNoclip()
 	self:_StopNoclip()
 	self._noclipOriginal = {}
 
-	local function apply()
+	local function Apply()
 		local c = LocalPlayer.Character
 		if not c then
 			return
 		end
 		for _, d in ipairs(c:GetDescendants()) do
-			if d:IsA("BasePart") and d.CanCollide == true then
-				if self._noclipOriginal[d] == nil then
-					self._noclipOriginal[d] = true
+			if d:IsA("BasePart") then
+				if d.CanCollide == true then
+					if self._noclipOriginal[d] == nil then
+						self._noclipOriginal[d] = true
+					end
+					d.CanCollide = false
 				end
-				d.CanCollide = false
 			end
 		end
 	end
 
-	apply()
-	self._noclipConnection = RunService.Stepped:Connect(apply)
+	Apply()
+	self._noclipConnection = RunService.Stepped:Connect(Apply)
 end
 
 function MoveModule:_StopNoclip()
@@ -229,7 +231,7 @@ function MoveModule:Enable()
 	local bv = Instance.new("BodyVelocity")
 	bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
 	bv.P = 1250
-	bv.Velocity = Vector3.new()
+	bv.Velocity = Vector3.new(0, 0, 0)
 	bv.Parent = self._humanoidRootPart
 	self._bodyVelocity = bv
 
@@ -252,7 +254,7 @@ function MoveModule:Enable()
 		local tgt = self._targetPosition
 		if not tgt then
 			self:_ResetGotoTracking()
-			self._bodyVelocity.Velocity = Vector3.new()
+			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
 			return
 		end
 
@@ -261,54 +263,53 @@ function MoveModule:Enable()
 		local dist = to.Magnitude
 		local now = os.clock()
 
-		local arrivalDist = math.max(tonumber(self.Config.arrivalDist) or 0, MIN_FINISH_DIST)
-		if dist <= arrivalDist then
-			self._targetPosition = nil
-			self:_ResetGotoTracking()
-			self._bodyVelocity.Velocity = Vector3.new()
-			return
-		end
+		local snapDist = math.max(tonumber(self.Config.snapDist) or 0, MIN_SNAP_DIST)
+		local snapEpsilon = math.max(tonumber(self.Config.snapEpsilon) or 0, MIN_SNAP_EPSILON)
+		local arrivalDist = math.max(tonumber(self.Config.arrivalDist) or 0, MIN_ARRIVAL_DIST)
 
-		if dist < (self._progressDist - MIN_PROGRESS_DELTA) then
+		-- Track movement progress so we can recover from micro-stalls near destination.
+		if dist < (self._progressDist - 0.005) then
 			self._progressDist = dist
 			self._progressAt = now
 		end
 
-		local minSpeed = math.max(tonumber(self.Config.minSpeed) or 0, 0)
-		local maxSpeed = math.max(tonumber(self.Config.maxSpeed) or 0, minSpeed)
-		local brakeStart = math.max(tonumber(self.Config.brakeStart) or 0, arrivalDist + 0.001)
+		if dist <= snapDist then
+			self._humanoidRootPart.CFrame = CFrame.new(tgt)
+			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+			if (self._humanoidRootPart.Position - tgt).Magnitude <= snapEpsilon then
+				self._targetPosition = nil
+				self:_ResetGotoTracking()
+			end
+			return
+		end
 
 		local spd
-		if dist >= brakeStart then
-			spd = maxSpeed
+		if dist >= self.Config.brakeStart then
+			spd = self.Config.maxSpeed
 		else
-			local t = (dist - arrivalDist) / math.max(brakeStart - arrivalDist, 0.0001)
-			t = math.clamp(t, 0, 1)
-			spd = minSpeed + (maxSpeed - minSpeed) * t
+			local t = math.clamp(dist / math.max(self.Config.brakeStart, 0.0001), 0, 1)
+			spd = self.Config.minSpeed + (self.Config.maxSpeed - self.Config.minSpeed) * t
 		end
 
-		local preciseRadius = math.max(arrivalDist * 12, 0.8)
-		if dist <= preciseRadius then
-			-- No snapping: near target we compute per-frame exact velocity and converge cleanly.
-			local exactSpeed = math.clamp((dist / dt) * 0.85, 0.05, maxSpeed)
-			spd = math.min(spd, exactSpeed)
-		end
-
-		local dir = (dist > 0.0001) and to.Unit or Vector3.new()
+		local dir = (dist > 0.0001) and to.Unit or Vector3.new(0, 0, 0)
 		local tv = dir * spd
 
-		local smoothRate = math.max(tonumber(self.Config.smoothRate) or 0, 0)
-		local alpha = math.clamp(smoothRate * dt, 0, 1)
-		if dist <= preciseRadius then
-			alpha = math.max(alpha, 0.85)
-		end
-		self._bodyVelocity.Velocity = Vector3Lerp(self._bodyVelocity.Velocity, tv, alpha)
+		local a = math.clamp(self.Config.smoothRate * dt, 0, 1)
+		self._bodyVelocity.Velocity = Vector3Lerp(self._bodyVelocity.Velocity, tv, a)
 
-		-- No positional snap fallback: force direct velocity if progress stalls.
+		if dist <= arrivalDist then
+			self._targetPosition = nil
+			self:_ResetGotoTracking()
+			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+			return
+		end
+
+		-- Stuck safeguard: if we stop making progress near target, hard-center and finish.
 		if dist <= STALL_DIST and self._progressAt > 0 and (now - self._progressAt) >= STALL_TIMEOUT then
-			local directSpeed = math.clamp((dist / dt) * 0.95, 0.2, maxSpeed)
-			self._bodyVelocity.Velocity = dir * directSpeed
-			self._progressAt = now
+			self._humanoidRootPart.CFrame = CFrame.new(tgt)
+			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+			self._targetPosition = nil
+			self:_ResetGotoTracking()
 		end
 	end)
 
@@ -329,14 +330,7 @@ function MoveModule:Goto(p)
 	self._progressDist = math.huge
 	self._progressAt = self._targetStartedAt
 	local want = p
-	local doneEpsilon = math.max(tonumber(self.Config.arrivalDist) or 0, MIN_FINISH_DIST)
-
-	if self._humanoidRootPart and (self._humanoidRootPart.Position - want).Magnitude <= doneEpsilon then
-		self._targetPosition = nil
-		self:_ResetGotoTracking()
-		self._bodyVelocity.Velocity = Vector3.new()
-		return true
-	end
+	local doneEpsilon = math.max(tonumber(self.Config.snapEpsilon) or 0, MIN_SNAP_EPSILON)
 
 	while true do
 		if not self._enabled then
@@ -344,7 +338,7 @@ function MoveModule:Goto(p)
 		end
 
 		if self._targetPosition == nil then
-			if self._humanoidRootPart and (self._humanoidRootPart.Position - want).Magnitude <= doneEpsilon then
+			if (self._humanoidRootPart.Position - want).Magnitude <= doneEpsilon then
 				return true
 			end
 			return false, "stopped"
@@ -362,7 +356,7 @@ function MoveModule:StopGoto()
 	self._targetPosition = nil
 	self:_ResetGotoTracking()
 	if self._enabled and self._bodyVelocity and self._bodyVelocity.Parent then
-		self._bodyVelocity.Velocity = Vector3.new()
+		self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
 	end
 end
 

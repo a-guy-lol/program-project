@@ -98,6 +98,8 @@ mv:SetConfig({
 	brakeStart = 10,
 	arrivalDist = 0,
 	smoothRate = 16,
+	snapDist = 0,
+	snapEpsilon = 0,
 })
 
 local UI = ZexonUI:CreateWindow("<font color=\"#1CB2F5\">MM2 And</font>", "Round + Weapons", false)
@@ -120,20 +122,6 @@ local activeTargetPos = nil
 local activeTargetAssignedAt = 0
 local activeTargetBagAtStart = 0
 local skippedCoins = {}
-local coinTouchInfo = {}
-local coinTouchConnections = {}
-
-local TARGET_FOCUS_RANGE = 50
-local OTHER_PLAYER_NEAR_COIN_DIST = 3
-local TARGET_MIN_HOLD_TIME = 0.12
-local TARGET_COMMIT_DISTANCE = 1.2
-local RETARGET_MARGIN_NEAR = 1.8
-local RETARGET_MARGIN_FAR = 3.6
-local COIN_TOUCHED_IGNORE_TIME = 1.0
-local LOCAL_TOUCH_RETARGET_DELAY = 0.02
-local MAX_STUCK_NEAR_TARGET_TIME = 0.55
-local FORCED_TOUCH_DISTANCE = 0.95
-local clearCoinTouchConnections
 
 local bagCurrent = 0
 local bagMax = 0
@@ -146,12 +134,8 @@ local flingingSheriff = false
 local flingingMurder = false
 local autoHandleInProgress = false
 local nextAutoHandleAt = 0
-local AUTO_HANDLE_REPOSITION_ATTEMPTS = 3
-local AUTO_HANDLE_SHOT_RETRY_ATTEMPTS = 2
-local AUTO_HANDLE_PRE_SHOT_WAIT = 0.12
-local AUTO_HANDLE_SHOT_WAIT = 0.85
-local AUTO_HANDLE_RETRY_COOLDOWN = 1.25
-local AUTO_HANDLE_FAIL_COOLDOWN = 1.7
+local AUTO_HANDLE_SHOT_WAIT = 0.9
+local AUTO_HANDLE_RETRY_COOLDOWN = 1.2
 local prevRoundActive = false
 
 local function stopCoinMovement(disableAll)
@@ -164,9 +148,6 @@ local function stopCoinMovement(disableAll)
 	if disableAll and coinMoveEnabled then
 		mv:Disable()
 		coinMoveEnabled = false
-	end
-	if disableAll then
-		clearCoinTouchConnections()
 	end
 end
 
@@ -193,6 +174,8 @@ local function setMoveSpeedForDistance(distance)
 		brakeStart = math.max(distance * 0.6, 10),
 		arrivalDist = 0,
 		smoothRate = 16,
+		snapDist = 0,
+		snapEpsilon = 0,
 	})
 end
 
@@ -208,7 +191,7 @@ local function getRoundAlivePlayers()
 		list[#list + 1] = p
 	end
 
-	local roles = getRoundRolesSafe()
+	local roles = mm2RoundClient:GetRoundRoles()
 	if roles then
 		addPlayer(roles.Murderer)
 		addPlayer(roles.Sheriff)
@@ -228,38 +211,14 @@ local function getRoundAlivePlayers()
 	return list
 end
 
-local function getCoinTouchParts(coin)
-	if not coin then
-		return {}
-	end
-
-	local allParts = {}
-	if coin:IsA("BasePart") then
-		allParts[1] = coin
-	else
-		for _, desc in ipairs(coin:GetDescendants()) do
-			if desc:IsA("BasePart") then
-				allParts[#allParts + 1] = desc
-			end
-		end
-	end
-
-	local touchParts = {}
-	for _, part in ipairs(allParts) do
-		if part:FindFirstChild("TouchInterest") or part:FindFirstChildOfClass("TouchTransmitter") then
-			touchParts[#touchParts + 1] = part
-		end
-	end
-
-	if #touchParts > 0 then
-		return touchParts
-	end
-	return allParts
-end
-
 local function getCoinPart(coin)
-	local parts = getCoinTouchParts(coin)
-	return parts[1]
+	if not coin then
+		return nil
+	end
+	if coin:IsA("BasePart") then
+		return coin
+	end
+	return coin:FindFirstChildWhichIsA("BasePart")
 end
 
 local function getCoinTargetPosition(coin)
@@ -268,10 +227,6 @@ local function getCoinTargetPosition(coin)
 	end
 
 	if coin:IsA("Model") then
-		local part = getCoinPart(coin)
-		if part then
-			return part.Position
-		end
 		local cf = coin:GetBoundingBox()
 		return cf.Position
 	end
@@ -281,144 +236,26 @@ local function getCoinTargetPosition(coin)
 end
 
 local function coinHasTouchInterest(coin)
-	for _, part in ipairs(getCoinTouchParts(coin)) do
-		if part:FindFirstChild("TouchInterest") or part:FindFirstChildOfClass("TouchTransmitter") then
-			return true
-		end
-	end
-	return false
-end
-
-local function disconnectCoinTouch(coin)
-	local entry = coinTouchConnections[coin]
-	if not entry then
-		return
-	end
-	if entry.connections then
-		for _, connection in ipairs(entry.connections) do
-			connection:Disconnect()
-		end
-	end
-	coinTouchConnections[coin] = nil
-end
-
-clearCoinTouchConnections = function()
-	for coin in pairs(coinTouchConnections) do
-		disconnectCoinTouch(coin)
-	end
-	coinTouchInfo = {}
-end
-
-local function watchCoinTouched(coin)
-	local parts = getCoinTouchParts(coin)
-	if #parts == 0 then
-		return
-	end
-
-	if coinTouchConnections[coin] then
-		return
-	end
-
-	local function onTouched(hit)
-		local model = hit and hit:FindFirstAncestorOfClass("Model")
-		local toucher = model and Players:GetPlayerFromCharacter(model) or nil
-		if not toucher then
-			return
-		end
-		coinTouchInfo[coin] = {
-			Player = toucher,
-			At = os.clock(),
-		}
-	end
-
-	local connections = {}
-	for _, part in ipairs(parts) do
-		connections[#connections + 1] = part.Touched:Connect(onTouched)
-	end
-
-	coinTouchConnections[coin] = {
-		connections = connections,
-		partCount = #parts,
-	}
-end
-
-local function syncCoinTouchWatchers(coinContainer)
-	if not coinContainer then
-		clearCoinTouchConnections()
-		return
-	end
-
-	local alive = {}
-	for _, coin in ipairs(coinContainer:GetChildren()) do
-		alive[coin] = true
-		watchCoinTouched(coin)
-	end
-
-	for coin in pairs(coinTouchConnections) do
-		if (not alive[coin]) or (not coin.Parent) or (not coin:IsDescendantOf(coinContainer)) then
-			disconnectCoinTouch(coin)
-			coinTouchInfo[coin] = nil
-		end
-	end
-end
-
-local function coinTouchedByOtherRecently(coin, now)
-	local info = coinTouchInfo[coin]
-	if not info or info.Player == LocalPlayer then
+	local part = getCoinPart(coin)
+	if not part then
 		return false
 	end
-	return (now - info.At) <= COIN_TOUCHED_IGNORE_TIME
+	if part:FindFirstChild("TouchInterest") then
+		return true
+	end
+	return part:FindFirstChildOfClass("TouchTransmitter") ~= nil
 end
 
-local function coinTouchedByLocalRecently(coin, now)
-	local info = coinTouchInfo[coin]
-	if not info or info.Player ~= LocalPlayer then
-		return false
-	end
-	return (now - info.At) <= 0.35
-end
-
-local function tryForceTouchCoin(coin, myRoot)
-	if not firetouchinterest or not coin or not myRoot then
-		return false
-	end
-
-	local touchedAny = false
-	for _, part in ipairs(getCoinTouchParts(coin)) do
-		if part and part.Parent then
-			pcall(firetouchinterest, myRoot, part, 0)
-			pcall(firetouchinterest, myRoot, part, 1)
-			touchedAny = true
-		end
-	end
-
-	if touchedAny then
-		coinTouchInfo[coin] = {
-			Player = LocalPlayer,
-			At = os.clock(),
-		}
-	end
-	return touchedAny
-end
-
-local function purgeSkippedCoins(coinContainer)
-	syncCoinTouchWatchers(coinContainer)
-
+local function purgeSkippedCoins()
 	local now = os.clock()
 	for coin, untilAt in pairs(skippedCoins) do
 		if (not coin) or (not coin.Parent) or untilAt <= now then
 			skippedCoins[coin] = nil
 		end
 	end
-
-	for coin, info in pairs(coinTouchInfo) do
-		if (not coin) or (not coin.Parent) or (not info) or ((now - info.At) > 2.2) then
-			coinTouchInfo[coin] = nil
-		end
-	end
 end
 
-local function isCoinSelectable(coin, coinContainer, now)
+local function isCoinSelectable(coin, coinContainer)
 	if not coin or not coin.Parent then
 		return false
 	end
@@ -428,110 +265,35 @@ local function isCoinSelectable(coin, coinContainer, now)
 	if skippedCoins[coin] and skippedCoins[coin] > os.clock() then
 		return false
 	end
-	if coinTouchedByOtherRecently(coin, now) then
-		return false
-	end
 	if not coinHasTouchInterest(coin) then
 		return false
 	end
 	return getCoinTargetPosition(coin) ~= nil
 end
 
-local function getAliveOpponentRoots()
-	local roots = {}
-	local roles = getRoundRolesSafe()
-	local seen = {}
-
-	local function addPlayer(player)
-		if not player or player == LocalPlayer or seen[player] then
-			return
-		end
-		seen[player] = true
-		if not isAlive(player) then
-			return
-		end
-		local root = getRoot(player)
-		if root then
-			roots[#roots + 1] = root
-		end
-	end
-
-	if roles then
-		addPlayer(roles.Murderer)
-		addPlayer(roles.Sheriff)
-		for _, p in ipairs(roles.Innocents or {}) do
-			addPlayer(p)
-		end
-	end
-
-	if #roots == 0 then
-		for _, p in ipairs(Players:GetPlayers()) do
-			if p ~= LocalPlayer and mm2RoundClient:IsPlayerInRound(p) then
-				addPlayer(p)
-			end
-		end
-	end
-
-	return roots
-end
-
-local function nearestRootDistance(position, roots)
-	local best = math.huge
-	for _, root in ipairs(roots) do
-		local dist = (root.Position - position).Magnitude
-		if dist < best then
-			best = dist
-		end
-	end
-	return best
-end
-
-local function getBestSelectableCoin(coinContainer)
+local function getNearestSelectableCoin(coinContainer)
 	local myRoot = getRoot(LocalPlayer)
 	if not myRoot or not coinContainer then
-		return nil, nil, nil
+		return nil
 	end
 
-	local now = os.clock()
-	local opponentRoots = getAliveOpponentRoots()
-	local bestNearCoin, bestNearPos, bestNearDist, bestNearScore = nil, nil, math.huge, math.huge
-	local bestFarCoin, bestFarPos, bestFarDist, bestFarScore = nil, nil, math.huge, math.huge
+	local bestCoin = nil
+	local bestDist = math.huge
 
 	for _, coin in ipairs(coinContainer:GetChildren()) do
-		if isCoinSelectable(coin, coinContainer, now) then
+		if isCoinSelectable(coin, coinContainer) then
 			local pos = getCoinTargetPosition(coin)
 			if pos then
 				local dist = (myRoot.Position - pos).Magnitude
-				if dist <= TARGET_FOCUS_RANGE then
-					local score = dist
-					local nearestOther = nearestRootDistance(pos, opponentRoots)
-					if nearestOther <= OTHER_PLAYER_NEAR_COIN_DIST then
-						-- Deprioritize likely-contested near coins without hard ignoring them.
-						score = score + ((OTHER_PLAYER_NEAR_COIN_DIST - nearestOther + 1) * 1.25)
-					end
-					if score < bestNearScore or (score == bestNearScore and dist < bestNearDist) then
-						bestNearScore = score
-						bestNearCoin = coin
-						bestNearPos = pos
-						bestNearDist = dist
-					end
-				else
-					local score = dist + 0.65
-					if score < bestFarScore or (score == bestFarScore and dist < bestFarDist) then
-						bestFarScore = score
-						bestFarCoin = coin
-						bestFarPos = pos
-						bestFarDist = dist
-					end
+				if dist < bestDist then
+					bestDist = dist
+					bestCoin = coin
 				end
 			end
 		end
 	end
 
-	if bestNearCoin then
-		return bestNearCoin, bestNearPos, bestNearDist
-	end
-	return bestFarCoin, bestFarPos, bestFarDist
+	return bestCoin
 end
 
 local function shootMurderer()
@@ -607,74 +369,31 @@ local function tryAutoHandleMurder()
 
 	autoHandleInProgress = true
 	task.spawn(function()
-		local shotAttempted = false
-		local caughtError = false
-
 		local ok = pcall(function()
 			local currentMurderer = murderer
-
-			for attempt = 1, AUTO_HANDLE_REPOSITION_ATTEMPTS do
-				if not autoHandleMurderEnabled then
-					break
-				end
-				if not mm2RoundClient:IsRoundActive() or not isAlive(currentMurderer) then
-					break
-				end
-
-				local myRoot = getRoot(LocalPlayer)
-				local targetRoot = getRoot(currentMurderer)
-				if not myRoot or not targetRoot then
-					break
-				end
-
-				local backDistance = 4.6 + ((attempt - 1) * 0.4)
-				local sideOffset = 0
-				if attempt == 2 then
-					sideOffset = 1.4
-				elseif attempt >= 3 then
-					sideOffset = -1.4
-				end
-
-				local behindPos = targetRoot.Position
-					- (targetRoot.CFrame.LookVector * backDistance)
-					+ (targetRoot.CFrame.RightVector * sideOffset)
-				myRoot.CFrame = CFrame.new(behindPos, targetRoot.Position)
-				task.wait(AUTO_HANDLE_PRE_SHOT_WAIT)
-
-				for _ = 1, AUTO_HANDLE_SHOT_RETRY_ATTEMPTS do
-					local fired = select(1, mm2WeaponClient:UseGun(currentMurderer))
-					if fired then
-						shotAttempted = true
-						break
-					end
-					task.wait(0.12)
-				end
-
-				if shotAttempted then
-					break
-				end
-				task.wait(0.2)
+			local myRoot = getRoot(LocalPlayer)
+			local targetRoot = getRoot(currentMurderer)
+			if not myRoot or not targetRoot then
+				return
 			end
+
+			local safeBehind = math.random(5, 6)
+			local behind = targetRoot.CFrame * CFrame.new(0, 0, safeBehind)
+			myRoot.CFrame = CFrame.new(behind.Position, targetRoot.Position)
+			task.wait(0.06)
+
+			mm2WeaponClient:UseGun(currentMurderer)
+
+			-- Wait for likely gun cooldown/server acceptance window before retrying.
+			task.wait(AUTO_HANDLE_SHOT_WAIT)
+			teleportToPlatform(true)
 		end)
 
-		if not ok then
-			caughtError = true
-		end
-
-		if shotAttempted then
-			task.wait(AUTO_HANDLE_SHOT_WAIT)
-		else
-			task.wait(0.25)
-		end
-
-			teleportToPlatform(true)
-
-		if (not caughtError) and shotAttempted then
-			nextAutoHandleAt = os.clock() + AUTO_HANDLE_RETRY_COOLDOWN
-		else
-			nextAutoHandleAt = os.clock() + AUTO_HANDLE_FAIL_COOLDOWN
-		end
+		nextAutoHandleAt = os.clock() + AUTO_HANDLE_RETRY_COOLDOWN
 		autoHandleInProgress = false
+		if not ok then
+			teleportToPlatform(false)
+		end
 	end)
 
 	return true
@@ -888,9 +607,9 @@ task.spawn(function()
 			continue
 		end
 
-			if roundActive and not localInRound then
-				stopCoinMovement(true)
-				teleportToPlatform(false)
+		if roundActive and not localInRound then
+			stopCoinMovement(true)
+			teleportToPlatform(false)
 			if flingSheriffEndRoundEnabled then
 				local roles = getRoundRolesSafe()
 				local murderer = roles and roles.Murderer
@@ -916,141 +635,113 @@ task.spawn(function()
 
 		tryAutoCollectGunDrop(map)
 
-			local coinContainer = map:FindFirstChild("CoinContainer")
-			if not coinContainer then
-				stopCoinMovement(true)
-				continue
+		local coinContainer = map:FindFirstChild("CoinContainer")
+		if not coinContainer then
+			stopCoinMovement(true)
+			continue
+		end
+
+		if bagMax > 0 and bagCurrent >= bagMax then
+			stopCoinMovement(true)
+			teleportToPlatform(false)
+
+			local now = os.clock()
+			local hasGun = mm2WeaponClient:HasGun()
+
+			if flingSheriffEndRoundEnabled and (not hasGun) then
+				local roles = getRoundRolesSafe()
+				local sheriff = roles and roles.Sheriff
+				if canFlingTarget(sheriff) and (now - lastFlingSheriffAt) >= FLING_COOLDOWN then
+					lastFlingSheriffAt = now
+					startFlingTarget(sheriff, "sheriff")
+				end
 			end
 
-			if bagMax > 0 and bagCurrent >= bagMax then
-				stopCoinMovement(true)
-
-				local now = os.clock()
-				local hasGun = mm2WeaponClient:HasGun()
-				local shouldAutoHandle = autoHandleMurderEnabled and hasGun
-
-				if flingSheriffEndRoundEnabled and (not hasGun) then
-					local roles = getRoundRolesSafe()
-					local sheriff = roles and roles.Sheriff
-					if canFlingTarget(sheriff) and (now - lastFlingSheriffAt) >= FLING_COOLDOWN then
-						lastFlingSheriffAt = now
-						startFlingTarget(sheriff, "sheriff")
-					end
-				end
-
-				if autoKnifeAllEnabled and (now - lastAutoKnifeAllAt) >= 0.5 and isLocalMurderer() then
-					lastAutoKnifeAllAt = now
-					mm2WeaponClient:UseKnifeAll()
-				end
-
-				if shouldAutoHandle then
-					tryAutoHandleMurder()
-				else
-					teleportToPlatform(false)
-				end
-
-				continue
+			if autoKnifeAllEnabled and (now - lastAutoKnifeAllAt) >= 0.5 and isLocalMurderer() then
+				lastAutoKnifeAllAt = now
+				mm2WeaponClient:UseKnifeAll()
 			end
 
-			if not ensureCoinMovementEnabled() then
-				continue
+			if autoHandleMurderEnabled then
+				tryAutoHandleMurder()
 			end
 
-			purgeSkippedCoins(coinContainer)
-			local bestCoin, bestPos, bestDist = getBestSelectableCoin(coinContainer)
+			continue
+		end
 
-				if activeTargetCoin then
-					local now = os.clock()
-					local myRoot = getRoot(LocalPlayer)
-					local elapsed = now - activeTargetAssignedAt
-					local targetPos = activeTargetPos or getCoinTargetPosition(activeTargetCoin)
-					local coinAlive = activeTargetCoin.Parent and activeTargetCoin:IsDescendantOf(coinContainer) and coinHasTouchInterest(activeTargetCoin)
-					local touchedByOther = coinTouchedByOtherRecently(activeTargetCoin, now)
+		if not ensureCoinMovementEnabled() then
+			continue
+		end
 
-					if (not myRoot) or (not targetPos) then
+		purgeSkippedCoins()
+
+		if activeTargetCoin then
+			local myRoot = getRoot(LocalPlayer)
+			local elapsed = os.clock() - activeTargetAssignedAt
+			local targetPos = activeTargetPos or getCoinTargetPosition(activeTargetCoin)
+			local coinAlive = activeTargetCoin.Parent and activeTargetCoin:IsDescendantOf(coinContainer) and coinHasTouchInterest(activeTargetCoin)
+
+			if (not myRoot) or (not targetPos) then
+				mv:StopGoto()
+				activeTargetCoin = nil
+				activeTargetPos = nil
+			else
+				activeTargetPos = targetPos
+				local dist = (myRoot.Position - targetPos).Magnitude
+				setMoveSpeedForDistance(dist)
+
+				local bagIncreased = bagCurrent > activeTargetBagAtStart
+				if bagIncreased then
+					if dist <= 0.03 or elapsed >= 0.35 then
+						skippedCoins[activeTargetCoin] = os.clock() + 0.2
 						mv:StopGoto()
 						activeTargetCoin = nil
 						activeTargetPos = nil
-					else
-						activeTargetPos = targetPos
-						local dist = (myRoot.Position - targetPos).Magnitude
-						setMoveSpeedForDistance(dist)
-						if dist <= FORCED_TOUCH_DISTANCE then
-							tryForceTouchCoin(activeTargetCoin, myRoot)
-						end
-						local touchedByLocal = coinTouchedByLocalRecently(activeTargetCoin, now)
-
-						if touchedByOther then
-							skippedCoins[activeTargetCoin] = now + COIN_TOUCHED_IGNORE_TIME
-							mv:StopGoto()
-							activeTargetCoin = nil
-							activeTargetPos = nil
-						elseif touchedByLocal then
-							skippedCoins[activeTargetCoin] = now + LOCAL_TOUCH_RETARGET_DELAY
-							mv:StopGoto()
-							activeTargetCoin = nil
-							activeTargetPos = nil
-							activeTargetBagAtStart = bagCurrent
-						else
-							local bagIncreased = bagCurrent > activeTargetBagAtStart
-							if not coinAlive then
-								skippedCoins[activeTargetCoin] = now + 0.8
-								mv:StopGoto()
-								activeTargetCoin = nil
-								activeTargetPos = nil
-							elseif bagIncreased then
-								-- Bag increase means we collected a coin; release target immediately to avoid stale waits.
-								skippedCoins[activeTargetCoin] = now + 0.08
-								mv:StopGoto()
-								activeTargetCoin = nil
-								activeTargetPos = nil
-								activeTargetBagAtStart = bagCurrent
-							elseif elapsed >= MAX_STUCK_NEAR_TARGET_TIME then
-								skippedCoins[activeTargetCoin] = now + 0.08
-								mv:StopGoto()
-								activeTargetCoin = nil
-								activeTargetPos = nil
-							elseif bestCoin and bestCoin ~= activeTargetCoin and elapsed >= TARGET_MIN_HOLD_TIME then
-								local shouldSwitch = false
-								if dist > TARGET_FOCUS_RANGE and bestDist <= TARGET_FOCUS_RANGE then
-									shouldSwitch = true
-								elseif dist <= TARGET_FOCUS_RANGE and bestDist <= TARGET_FOCUS_RANGE then
-									shouldSwitch = dist > TARGET_COMMIT_DISTANCE and ((bestDist + RETARGET_MARGIN_NEAR) < dist)
-								else
-									shouldSwitch = dist > TARGET_COMMIT_DISTANCE and ((bestDist + RETARGET_MARGIN_FAR) < dist)
-								end
-
-								if shouldSwitch then
-									skippedCoins[activeTargetCoin] = now + 0.12
-									mv:StopGoto()
-									activeTargetCoin = nil
-									activeTargetPos = nil
-								end
-							end
-						end
+					end
+				else
+					if not coinAlive then
+						skippedCoins[activeTargetCoin] = os.clock() + 0.9
+						mv:StopGoto()
+						activeTargetCoin = nil
+						activeTargetPos = nil
+					elseif elapsed >= 1.1 and dist <= 1.0 then
+						skippedCoins[activeTargetCoin] = os.clock() + 0.9
+						mv:StopGoto()
+						activeTargetCoin = nil
+						activeTargetPos = nil
+					elseif elapsed >= 1.8 and dist <= 2.0 then
+						skippedCoins[activeTargetCoin] = os.clock() + 0.9
+						mv:StopGoto()
+						activeTargetCoin = nil
+						activeTargetPos = nil
 					end
 				end
 			end
+		end
 
-			if not activeTargetCoin then
-				if bestCoin and bestPos then
+		if not activeTargetCoin then
+			local nextCoin = getNearestSelectableCoin(coinContainer)
+			if nextCoin then
+				local nextPos = getCoinTargetPosition(nextCoin)
+				if nextPos then
 					local myRoot = getRoot(LocalPlayer)
 					if myRoot then
-						setMoveSpeedForDistance((myRoot.Position - bestPos).Magnitude)
+						setMoveSpeedForDistance((myRoot.Position - nextPos).Magnitude)
 					end
 
-					activeTargetCoin = bestCoin
-					activeTargetPos = bestPos
+					activeTargetCoin = nextCoin
+					activeTargetPos = nextPos
 					activeTargetAssignedAt = os.clock()
 					activeTargetBagAtStart = bagCurrent
 					mv:StopGoto()
 					task.spawn(function()
-						mv:Goto(bestPos)
+						mv:Goto(nextPos)
 					end)
-				else
-					stopCoinMovement(true)
 				end
+			else
+				stopCoinMovement(true)
 			end
+		end
 	end
 end)
 
