@@ -5,15 +5,15 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
 local ZexonUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/zexonUI.lua"))()
-
--- Requested module names.
 local mm2RoundClient = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/MM2-RoundModule.lua"))()
 local mm2WeaponClient = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/mm2WeaponModule.lua"))()
 local flingClient = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/flingPlayerModule.lua"))()
 local mv = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/moveVelocityModule.lua"))()
+local mm2AutoFarm = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/mm2AutoFarmModule.lua"))()
 
 local PLATFORM_POS = Vector3.new(200, 500, 200)
 local PLATFORM_NAME = "MM2And_SafePlatform"
+local PLATFORM_TP_COOLDOWN = 1.25
 
 local function getRoot(player)
 	if not player or not player.Character then
@@ -68,8 +68,6 @@ local function ensureSafePlatform()
 end
 
 local lastPlatformTeleportAt = 0
-local PLATFORM_TP_COOLDOWN = 1.25
-
 local function teleportToPlatform(force)
 	local myRoot = getRoot(LocalPlayer)
 	if not myRoot then
@@ -97,9 +95,36 @@ mv:SetConfig({
 	maxSpeed = 17.5,
 	brakeStart = 10,
 	arrivalDist = 0,
-	smoothRate = 16,
+	smoothRate = 18,
 	snapDist = 0,
 	snapEpsilon = 0,
+})
+
+mm2AutoFarm:Bind({
+	RoundClient = mm2RoundClient,
+	MoveClient = mv,
+	LocalPlayer = LocalPlayer,
+})
+
+mm2AutoFarm:SetConfig({
+	FocusRange = 50,
+	OtherPlayerNearCoinDist = 3,
+	NearDangerPenalty = 12,
+	FarCoinPenalty = 2.5,
+	RetargetMargin = 1.25,
+	CommitDistance = 2,
+	OtherTouchIgnoreTime = 1.0,
+	MissingCoinIgnoreTime = 0.75,
+	ConfirmTimeout = 0.25,
+	StepInterval = 0.045,
+	MoveMinSpeed = 17.5,
+	MoveMaxSpeed = 17.5,
+	MoveBrakeStart = 10,
+	MoveArrivalDist = 0,
+	MoveSnapDist = 0,
+	MoveSnapEpsilon = 0,
+	MoveSmoothRate = 18,
+	CenterEpsilon = 0.01,
 })
 
 local UI = ZexonUI:CreateWindow("<font color=\"#1CB2F5\">MM2 And</font>", "Round + Weapons", false)
@@ -116,13 +141,6 @@ local autoHandleMurderEnabled = false
 local autoCollectGunDropEnabled = false
 local flingSheriffEndRoundEnabled = false
 
-local coinMoveEnabled = false
-local activeTargetCoin = nil
-local activeTargetPos = nil
-local activeTargetAssignedAt = 0
-local activeTargetBagAtStart = 0
-local skippedCoins = {}
-
 local bagCurrent = 0
 local bagMax = 0
 
@@ -132,168 +150,47 @@ local lastFlingMurderAt = 0
 local FLING_COOLDOWN = 1.4
 local flingingSheriff = false
 local flingingMurder = false
+
 local autoHandleInProgress = false
 local nextAutoHandleAt = 0
-local AUTO_HANDLE_SHOT_WAIT = 0.9
-local AUTO_HANDLE_RETRY_COOLDOWN = 1.2
+local AUTO_HANDLE_REPOSITION_ATTEMPTS = 5
+local AUTO_HANDLE_SHOT_RETRY_ATTEMPTS = 2
+local AUTO_HANDLE_SHOT_RETRY_STEP = 0.14
+local AUTO_HANDLE_SUCCESS_COOLDOWN = 0.95
+local AUTO_HANDLE_FAIL_COOLDOWN = 1.5
+
 local prevRoundActive = false
-
-local function stopCoinMovement(disableAll)
-	mv:StopGoto()
-	activeTargetCoin = nil
-	activeTargetPos = nil
-	activeTargetAssignedAt = 0
-	activeTargetBagAtStart = bagCurrent
-
-	if disableAll and coinMoveEnabled then
-		mv:Disable()
-		coinMoveEnabled = false
-	end
-end
-
-local function ensureCoinMovementEnabled()
-	if coinMoveEnabled then
-		return true
-	end
-	local ok = mv:Enable()
-	if ok then
-		coinMoveEnabled = true
-	end
-	return ok
-end
-
-local function setMoveSpeedForDistance(distance)
-	local maxSpeed = 17.5
-	if distance > 10 then
-		maxSpeed = math.clamp(17.5 + ((distance - 10) * 0.5), 17.5, 25)
-	end
-
-	mv:SetConfig({
-		minSpeed = 17.5,
-		maxSpeed = maxSpeed,
-		brakeStart = math.max(distance * 0.6, 10),
-		arrivalDist = 0,
-		smoothRate = 16,
-		snapDist = 0,
-		snapEpsilon = 0,
-	})
-end
 
 local function getRoundAlivePlayers()
 	local list = {}
 	local seen = {}
 
-	local function addPlayer(p)
-		if not p or p == LocalPlayer or seen[p] or not isAlive(p) then
+	local function addPlayer(player)
+		if not player or player == LocalPlayer or seen[player] or not isAlive(player) then
 			return
 		end
-		seen[p] = true
-		list[#list + 1] = p
+		seen[player] = true
+		list[#list + 1] = player
 	end
 
-	local roles = mm2RoundClient:GetRoundRoles()
+	local roles = getRoundRolesSafe()
 	if roles then
 		addPlayer(roles.Murderer)
 		addPlayer(roles.Sheriff)
-		for _, p in ipairs(roles.Innocents or {}) do
-			addPlayer(p)
+		for _, player in ipairs(roles.Innocents or {}) do
+			addPlayer(player)
 		end
 	end
 
 	if #list == 0 then
-		for _, p in ipairs(Players:GetPlayers()) do
-			if p ~= LocalPlayer and mm2RoundClient:IsPlayerInRound(p) then
-				addPlayer(p)
+		for _, player in ipairs(Players:GetPlayers()) do
+			if player ~= LocalPlayer and mm2RoundClient:IsPlayerInRound(player) then
+				addPlayer(player)
 			end
 		end
 	end
 
 	return list
-end
-
-local function getCoinPart(coin)
-	if not coin then
-		return nil
-	end
-	if coin:IsA("BasePart") then
-		return coin
-	end
-	return coin:FindFirstChildWhichIsA("BasePart")
-end
-
-local function getCoinTargetPosition(coin)
-	if not coin then
-		return nil
-	end
-
-	if coin:IsA("Model") then
-		local cf = coin:GetBoundingBox()
-		return cf.Position
-	end
-
-	local part = getCoinPart(coin)
-	return part and part.Position or nil
-end
-
-local function coinHasTouchInterest(coin)
-	local part = getCoinPart(coin)
-	if not part then
-		return false
-	end
-	if part:FindFirstChild("TouchInterest") then
-		return true
-	end
-	return part:FindFirstChildOfClass("TouchTransmitter") ~= nil
-end
-
-local function purgeSkippedCoins()
-	local now = os.clock()
-	for coin, untilAt in pairs(skippedCoins) do
-		if (not coin) or (not coin.Parent) or untilAt <= now then
-			skippedCoins[coin] = nil
-		end
-	end
-end
-
-local function isCoinSelectable(coin, coinContainer)
-	if not coin or not coin.Parent then
-		return false
-	end
-	if coinContainer and not coin:IsDescendantOf(coinContainer) then
-		return false
-	end
-	if skippedCoins[coin] and skippedCoins[coin] > os.clock() then
-		return false
-	end
-	if not coinHasTouchInterest(coin) then
-		return false
-	end
-	return getCoinTargetPosition(coin) ~= nil
-end
-
-local function getNearestSelectableCoin(coinContainer)
-	local myRoot = getRoot(LocalPlayer)
-	if not myRoot or not coinContainer then
-		return nil
-	end
-
-	local bestCoin = nil
-	local bestDist = math.huge
-
-	for _, coin in ipairs(coinContainer:GetChildren()) do
-		if isCoinSelectable(coin, coinContainer) then
-			local pos = getCoinTargetPosition(coin)
-			if pos then
-				local dist = (myRoot.Position - pos).Magnitude
-				if dist < bestDist then
-					bestDist = dist
-					bestCoin = coin
-				end
-			end
-		end
-	end
-
-	return bestCoin
 end
 
 local function shootMurderer()
@@ -355,9 +252,7 @@ local function tryAutoHandleMurder()
 	if autoHandleInProgress then
 		return false
 	end
-
-	local now = os.clock()
-	if now < nextAutoHandleAt then
+	if os.clock() < nextAutoHandleAt then
 		return false
 	end
 
@@ -369,31 +264,57 @@ local function tryAutoHandleMurder()
 
 	autoHandleInProgress = true
 	task.spawn(function()
+		local shotSucceeded = false
 		local ok = pcall(function()
-			local currentMurderer = murderer
-			local myRoot = getRoot(LocalPlayer)
-			local targetRoot = getRoot(currentMurderer)
-			if not myRoot or not targetRoot then
-				return
+			for attempt = 1, AUTO_HANDLE_REPOSITION_ATTEMPTS do
+				if not autoHandleMurderEnabled then
+					break
+				end
+				if not mm2RoundClient:IsRoundActive() or not isAlive(murderer) then
+					break
+				end
+
+				local myRoot = getRoot(LocalPlayer)
+				local targetRoot = getRoot(murderer)
+				if not myRoot or not targetRoot then
+					break
+				end
+
+				local backDistance = 4.2 + ((attempt - 1) * 0.25)
+				local sideSign = (attempt % 2 == 0) and 1 or -1
+				local sideOffset = (attempt == 1) and 0 or (1.1 * sideSign)
+				local behindPos = targetRoot.Position
+					- (targetRoot.CFrame.LookVector * backDistance)
+					+ (targetRoot.CFrame.RightVector * sideOffset)
+
+				myRoot.CFrame = CFrame.new(behindPos, targetRoot.Position)
+				task.wait(0.08)
+
+				for _ = 1, AUTO_HANDLE_SHOT_RETRY_ATTEMPTS do
+					local fireOk = select(1, mm2WeaponClient:UseGun(murderer))
+					if fireOk then
+						shotSucceeded = true
+						break
+					end
+					task.wait(AUTO_HANDLE_SHOT_RETRY_STEP)
+				end
+
+				if shotSucceeded then
+					break
+				end
+				task.wait(0.18)
 			end
-
-			local safeBehind = math.random(5, 6)
-			local behind = targetRoot.CFrame * CFrame.new(0, 0, safeBehind)
-			myRoot.CFrame = CFrame.new(behind.Position, targetRoot.Position)
-			task.wait(0.06)
-
-			mm2WeaponClient:UseGun(currentMurderer)
-
-			-- Wait for likely gun cooldown/server acceptance window before retrying.
-			task.wait(AUTO_HANDLE_SHOT_WAIT)
-			teleportToPlatform(true)
 		end)
 
-		nextAutoHandleAt = os.clock() + AUTO_HANDLE_RETRY_COOLDOWN
-		autoHandleInProgress = false
-		if not ok then
-			teleportToPlatform(false)
+		task.wait(shotSucceeded and 0.35 or 0.2)
+		teleportToPlatform(false)
+
+		if ok and shotSucceeded then
+			nextAutoHandleAt = os.clock() + AUTO_HANDLE_SUCCESS_COOLDOWN
+		else
+			nextAutoHandleAt = os.clock() + AUTO_HANDLE_FAIL_COOLDOWN
 		end
+		autoHandleInProgress = false
 	end)
 
 	return true
@@ -429,7 +350,6 @@ local function tryAutoCollectGunDrop(map)
 	end
 end
 
--- Coin bag tracker from provided coinBagClient pattern.
 task.spawn(function()
 	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
 	if not remotes then
@@ -452,12 +372,14 @@ task.spawn(function()
 			if type(max) == "number" then
 				bagMax = max
 			end
+			mm2AutoFarm:SetBag(bagCurrent, bagMax)
 		end)
 	end
 
 	if coinsStarted and coinsStarted:IsA("RemoteEvent") then
 		coinsStarted.OnClientEvent:Connect(function()
 			bagCurrent = 0
+			mm2AutoFarm:SetBag(bagCurrent, bagMax)
 		end)
 	end
 end)
@@ -467,7 +389,7 @@ local CombatSection = CombatTab:CreateSection("MM2 Controls")
 
 CombatSection:CreateParagraph(
 	"MM2 Panel",
-	"Shoot keybind targets murderer. Knife All keybind hits all alive players if murderer. Auto Handle Murder runs after bag is full.",
+	"Shoot keybind targets murderer. Knife All keybind hits all alive players if murderer. Auto Handle Murder retries with cooldown-safe timing.",
 	5
 )
 
@@ -499,7 +421,7 @@ CombatSection:CreateToggle("Auto Knife All", {
 end)
 
 CombatSection:CreateToggle("Auto Handle Murder", {
-	Description = "After bag full: teleport behind murderer, shoot, return to platform; repeat until dead.",
+	Description = "After bag full: teleport behind murderer, attempt shoot(s), return to platform, retry with cooldown.",
 	Toggled = false,
 }, function(state)
 	autoHandleMurderEnabled = state
@@ -524,14 +446,16 @@ local CoinTab = UI:CreatePage("CoinCollection")
 local CoinSection = CoinTab:CreateSection("Collection")
 
 CoinSection:CreateToggle("OptimizedCoinCollection", {
-	Description = "Collect nearest valid coins with center-touch enforcement.",
+	Description = "Uses MM2AutoFarmModule: 50-stud focus, touch tracking, nearest real-time retargeting.",
 	Toggled = false,
 }, function(state)
 	optimizedCoinCollectionEnabled = state
 	if state then
 		ensureSafePlatform()
+		mm2AutoFarm:SetBag(bagCurrent, bagMax)
+		mm2AutoFarm:Enable()
 	else
-		stopCoinMovement(true)
+		mm2AutoFarm:Disable()
 	end
 end)
 
@@ -551,7 +475,7 @@ end)
 
 CoinSection:CreateParagraph(
 	"Notes",
-	"Speed is dynamic 17.5 to 25 while far, never below 17.5. Platform teleports are throttled and only used when needed.",
+	"Coin routing now runs in modules/mm2AutoFarmModule.lua and moveVelocity now hard-centers on exact destination.",
 	4
 )
 
@@ -575,15 +499,15 @@ RunService.Heartbeat:Connect(function(dt)
 		return
 	end
 
-	for _, p in ipairs(getRoundAlivePlayers()) do
-		local targetRoot = getRoot(p)
+	for _, player in ipairs(getRoundAlivePlayers()) do
+		local targetRoot = getRoot(player)
 		if targetRoot then
 			local dist = (myRoot.Position - targetRoot.Position).Magnitude
 			if dist <= nearbyKnifeRange then
 				local now = os.clock()
-				if not lastKnifeAt[p] or (now - lastKnifeAt[p]) >= nearbyKnifeCooldown then
-					mm2WeaponClient:UseKnife(p)
-					lastKnifeAt[p] = now
+				if not lastKnifeAt[player] or (now - lastKnifeAt[player]) >= nearbyKnifeCooldown then
+					mm2WeaponClient:UseKnife(player)
+					lastKnifeAt[player] = now
 				end
 			end
 		end
@@ -591,24 +515,38 @@ RunService.Heartbeat:Connect(function(dt)
 end)
 
 task.spawn(function()
-	while task.wait(0.03) do
-		local roundActive = mm2RoundClient:IsRoundActive()
-		local localInRound = roundActive and mm2RoundClient:IsPlayerInRound(LocalPlayer) and isAlive(LocalPlayer)
+	while task.wait(0.05) do
+		mm2AutoFarm:SetBag(bagCurrent, bagMax)
 
-		if prevRoundActive and not roundActive and optimizedCoinCollectionEnabled then
-			stopCoinMovement(true)
-			teleportToPlatform(true)
-			bagCurrent = 0
-		end
-		prevRoundActive = roundActive
-
-		if not optimizedCoinCollectionEnabled then
-			stopCoinMovement(true)
+		if optimizedCoinCollectionEnabled then
+			if not mm2AutoFarm:IsEnabled() then
+				mm2AutoFarm:Enable()
+			end
+		else
+			if mm2AutoFarm:IsEnabled() then
+				mm2AutoFarm:Disable()
+			end
 			continue
 		end
 
+		local farmStatus = mm2AutoFarm:GetStatus()
+		local roundActive = farmStatus.RoundActive
+		local localInRound = farmStatus.LocalInRound
+		local bagFull = farmStatus.BagFull
+		local map = farmStatus.Map
+
+		if prevRoundActive and not roundActive then
+			teleportToPlatform(true)
+			bagCurrent = 0
+			mm2AutoFarm:SetBag(bagCurrent, bagMax)
+		end
+		prevRoundActive = roundActive
+
+		if roundActive and localInRound and map then
+			tryAutoCollectGunDrop(map)
+		end
+
 		if roundActive and not localInRound then
-			stopCoinMovement(true)
 			teleportToPlatform(false)
 			if flingSheriffEndRoundEnabled then
 				local roles = getRoundRolesSafe()
@@ -623,26 +561,10 @@ task.spawn(function()
 		end
 
 		if not roundActive then
-			stopCoinMovement(true)
 			continue
 		end
 
-		local map = mm2RoundClient:GetMap()
-		if not map then
-			stopCoinMovement(true)
-			continue
-		end
-
-		tryAutoCollectGunDrop(map)
-
-		local coinContainer = map:FindFirstChild("CoinContainer")
-		if not coinContainer then
-			stopCoinMovement(true)
-			continue
-		end
-
-		if bagMax > 0 and bagCurrent >= bagMax then
-			stopCoinMovement(true)
+		if bagFull then
 			teleportToPlatform(false)
 
 			local now = os.clock()
@@ -657,93 +579,16 @@ task.spawn(function()
 				end
 			end
 
-			if autoKnifeAllEnabled and (now - lastAutoKnifeAllAt) >= 0.5 and isLocalMurderer() then
+			if autoKnifeAllEnabled and isLocalMurderer() and (now - lastAutoKnifeAllAt) >= 0.5 then
 				lastAutoKnifeAllAt = now
 				mm2WeaponClient:UseKnifeAll()
 			end
 
-			if autoHandleMurderEnabled then
+			if autoHandleMurderEnabled and hasGun then
 				tryAutoHandleMurder()
-			end
-
-			continue
-		end
-
-		if not ensureCoinMovementEnabled() then
-			continue
-		end
-
-		purgeSkippedCoins()
-
-		if activeTargetCoin then
-			local myRoot = getRoot(LocalPlayer)
-			local elapsed = os.clock() - activeTargetAssignedAt
-			local targetPos = activeTargetPos or getCoinTargetPosition(activeTargetCoin)
-			local coinAlive = activeTargetCoin.Parent and activeTargetCoin:IsDescendantOf(coinContainer) and coinHasTouchInterest(activeTargetCoin)
-
-			if (not myRoot) or (not targetPos) then
-				mv:StopGoto()
-				activeTargetCoin = nil
-				activeTargetPos = nil
-			else
-				activeTargetPos = targetPos
-				local dist = (myRoot.Position - targetPos).Magnitude
-				setMoveSpeedForDistance(dist)
-
-				local bagIncreased = bagCurrent > activeTargetBagAtStart
-				if bagIncreased then
-					if dist <= 0.03 or elapsed >= 0.35 then
-						skippedCoins[activeTargetCoin] = os.clock() + 0.2
-						mv:StopGoto()
-						activeTargetCoin = nil
-						activeTargetPos = nil
-					end
-				else
-					if not coinAlive then
-						skippedCoins[activeTargetCoin] = os.clock() + 0.9
-						mv:StopGoto()
-						activeTargetCoin = nil
-						activeTargetPos = nil
-					elseif elapsed >= 1.1 and dist <= 1.0 then
-						skippedCoins[activeTargetCoin] = os.clock() + 0.9
-						mv:StopGoto()
-						activeTargetCoin = nil
-						activeTargetPos = nil
-					elseif elapsed >= 1.8 and dist <= 2.0 then
-						skippedCoins[activeTargetCoin] = os.clock() + 0.9
-						mv:StopGoto()
-						activeTargetCoin = nil
-						activeTargetPos = nil
-					end
-				end
-			end
-		end
-
-		if not activeTargetCoin then
-			local nextCoin = getNearestSelectableCoin(coinContainer)
-			if nextCoin then
-				local nextPos = getCoinTargetPosition(nextCoin)
-				if nextPos then
-					local myRoot = getRoot(LocalPlayer)
-					if myRoot then
-						setMoveSpeedForDistance((myRoot.Position - nextPos).Magnitude)
-					end
-
-					activeTargetCoin = nextCoin
-					activeTargetPos = nextPos
-					activeTargetAssignedAt = os.clock()
-					activeTargetBagAtStart = bagCurrent
-					mv:StopGoto()
-					task.spawn(function()
-						mv:Goto(nextPos)
-					end)
-				end
-			else
-				stopCoinMovement(true)
 			end
 		end
 	end
 end)
 
--- Keep module toggle state in sync on startup.
 mm2WeaponClient:TogglePrediction(gunPredictionEnabled)
