@@ -32,6 +32,9 @@ local lastKnifeAt = {}
 local optimizedCoinCollectionEnabled = false
 local coinMoveEnabled = false
 local activeTargetCoin = nil
+local activeTargetAssignedAt = 0
+local activeTargetBagAtStart = 0
+local skippedCoins = {}
 
 local bagCurrent = 0
 local bagMax = 0
@@ -103,6 +106,8 @@ end
 local function stopCoinMovement(disableAll)
 	mv:StopGoto()
 	activeTargetCoin = nil
+	activeTargetAssignedAt = 0
+	activeTargetBagAtStart = bagCurrent
 
 	if disableAll and coinMoveEnabled then
 		mv:Disable()
@@ -119,6 +124,57 @@ local function ensureCoinMovementEnabled()
 		coinMoveEnabled = true
 	end
 	return ok
+end
+
+local function purgeSkippedCoins()
+	local now = os.clock()
+	for coin, untilAt in pairs(skippedCoins) do
+		if (not coin) or (not coin.Parent) or untilAt <= now then
+			skippedCoins[coin] = nil
+		end
+	end
+end
+
+local function isCoinSelectable(coin, coinContainer)
+	if not coin or not coin.Parent then
+		return false
+	end
+	if coinContainer and (not coin:IsDescendantOf(coinContainer)) then
+		return false
+	end
+	if skippedCoins[coin] and skippedCoins[coin] > os.clock() then
+		return false
+	end
+	return getCoinPart(coin) ~= nil
+end
+
+local function getNextCoin(coinContainer)
+	-- First preference: use round module API.
+	local nearestCoin = mm2RoundClient:GetNearestCoin(LocalPlayer)
+	if isCoinSelectable(nearestCoin, coinContainer) then
+		return nearestCoin
+	end
+
+	-- Fallback: local scan to avoid selecting a temporarily skipped/stale coin.
+	local myRoot = getRoot(LocalPlayer)
+	if not myRoot or not coinContainer then
+		return nil
+	end
+
+	local bestCoin = nil
+	local bestDist = math.huge
+	for _, coin in ipairs(coinContainer:GetChildren()) do
+		if isCoinSelectable(coin, coinContainer) then
+			local part = getCoinPart(coin)
+			local dist = (part.Position - myRoot.Position).Magnitude
+			if dist < bestDist then
+				bestDist = dist
+				bestCoin = coin
+			end
+		end
+	end
+
+	return bestCoin
 end
 
 local function shootMurderer()
@@ -270,7 +326,7 @@ RunService.Heartbeat:Connect(function(dt)
 end)
 
 task.spawn(function()
-	while task.wait(0.1) do
+	while task.wait(0.03) do
 		local roundActive = mm2RoundClient:IsRoundActive()
 
 		if not optimizedCoinCollectionEnabled then
@@ -303,18 +359,43 @@ task.spawn(function()
 			continue
 		end
 
+		purgeSkippedCoins()
+
 		if activeTargetCoin and (not activeTargetCoin.Parent or not activeTargetCoin:IsDescendantOf(coinContainer)) then
 			-- Coin was taken/removed, pick a new one.
 			mv:StopGoto()
 			activeTargetCoin = nil
 		end
 
+		if activeTargetCoin then
+			-- Fast retarget once we know bag increased (coin collected).
+			if bagCurrent > activeTargetBagAtStart then
+				mv:StopGoto()
+				activeTargetCoin = nil
+			else
+				local myRoot = getRoot(LocalPlayer)
+				local targetPart = getCoinPart(activeTargetCoin)
+				local elapsed = os.clock() - activeTargetAssignedAt
+				if (not targetPart) or (not myRoot) then
+					mv:StopGoto()
+					activeTargetCoin = nil
+				elseif elapsed >= 0.25 and (myRoot.Position - targetPart.Position).Magnitude <= 2.2 then
+					-- Prevent 1-3s stalls near stale/contested coins.
+					skippedCoins[activeTargetCoin] = os.clock() + 0.9
+					mv:StopGoto()
+					activeTargetCoin = nil
+				end
+			end
+		end
+
 		if not activeTargetCoin then
-			local nearestCoin = mm2RoundClient:GetNearestCoin(LocalPlayer)
+			local nearestCoin = getNextCoin(coinContainer)
 			if nearestCoin then
 				local targetPart = getCoinPart(nearestCoin)
 				if targetPart then
 					activeTargetCoin = nearestCoin
+					activeTargetAssignedAt = os.clock()
+					activeTargetBagAtStart = bagCurrent
 					mv:StopGoto()
 					task.spawn(function()
 						mv:Goto(targetPart.Position)
