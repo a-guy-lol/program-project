@@ -24,6 +24,25 @@ local function GetBackpack()
 	return LocalPlayer:FindFirstChildOfClass("Backpack")
 end
 
+local function EnsureToolEquipped(tool)
+	if not IsTool(tool) then
+		return false
+	end
+	local character = GetCharacter()
+	if not character then
+		return false
+	end
+	if tool.Parent == character then
+		return true
+	end
+	local hum = character:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return false
+	end
+	hum:EquipTool(tool)
+	return tool.Parent == character
+end
+
 local function FindToolByAttribute(attrName)
 	local backpack = GetBackpack()
 	if backpack then
@@ -121,6 +140,9 @@ function MM2WeaponModule:UseGun(target)
 	if not gun then
 		return false, "no_gun"
 	end
+	if not EnsureToolEquipped(gun) then
+		return false, "equip_failed"
+	end
 
 	local shootRemote = gun:FindFirstChild("Shoot")
 	if not shootRemote or not shootRemote:IsA("RemoteEvent") then
@@ -140,16 +162,14 @@ function MM2WeaponModule:UseGun(target)
 		return false, "no_character"
 	end
 
-	local hrp = character:FindFirstChild("HumanoidRootPart")
-	local raycastAttachment = hrp and hrp:FindFirstChild("GunRaycastAttachment")
-	local originCFrame = (raycastAttachment and raycastAttachment:IsA("Attachment")) and raycastAttachment.WorldCFrame or nil
-
 	local targetCFrame = ResolveTargetCFrame(targetPlayer)
 	if not targetCFrame then
 		return false, "target_no_character"
 	end
 
-	shootRemote:FireServer(originCFrame, targetCFrame)
+	-- Wall-ignore mode: use the target cframe as origin and target.
+	-- This bypasses the local CantShoot LOS check path since we do not use that script flow.
+	shootRemote:FireServer(targetCFrame, targetCFrame)
 	return true
 end
 
@@ -158,6 +178,9 @@ function MM2WeaponModule:UseKnife(target)
 	if not knife then
 		return false, "no_knife"
 	end
+	if not EnsureToolEquipped(knife) then
+		return false, "equip_failed"
+	end
 
 	local targetPlayer = target
 	if typeof(target) == "string" then
@@ -165,13 +188,6 @@ function MM2WeaponModule:UseKnife(target)
 	end
 	if not targetPlayer or not targetPlayer:IsA("Player") then
 		return false, "bad_target"
-	end
-
-	if IsTool(knife) and knife.Parent == GetBackpack() then
-		local hum = GetCharacter() and GetCharacter():FindFirstChildOfClass("Humanoid")
-		if hum then
-			hum:EquipTool(knife)
-		end
 	end
 
 	local eventsFolder = knife:FindFirstChild("Events")
