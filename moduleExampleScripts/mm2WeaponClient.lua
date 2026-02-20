@@ -22,6 +22,7 @@ print("HasGun:", MM2Weapons:HasGun())
 print("HasKnife:", MM2Weapons:HasKnife())
 
 if MM2Weapons:HasGun() then
+	MM2Weapons:TogglePrediction(true)
 	local ok, reason = MM2Weapons:UseGun(TargetPlayer)
 	print("UseGun:", ok, reason)
 elseif MM2Weapons:HasKnife() then

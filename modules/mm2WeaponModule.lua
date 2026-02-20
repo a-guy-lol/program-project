@@ -12,12 +12,19 @@ end)
 
 MM2WeaponModule.Prediction = {
 	Enabled = false,
-	ShotDelay = 0.1,
-	ExtraDelay = 0.02,
-	MinLead = 0.02,
-	MaxLead = 0.3,
+	HistorySize = 6,
 	MaxVelocity = 45,
+	BaseHorizon = 0.09,
+	SpeedScale = 0.0035,
+	DistanceScale = 0.0009,
+	MinHorizon = 0.06,
+	MaxHorizon = 0.24,
+	CurrentVelocityWeight = 0.6,
+	MoveDirectionWeight = 0.2,
+	AccelerationWeight = 0.5,
+	MinTurnDamping = 0.5,
 }
+MM2WeaponModule._predictionState = {}
 
 local function IsTool(x)
 	return typeof(x) == "Instance" and x:IsA("Tool")
@@ -137,6 +144,96 @@ local function ResolveTargetCFrame(targetPlayer)
 	return targetPart.CFrame, targetPart
 end
 
+local function ClampVelocity(velocity, maxVelocity)
+	if velocity.Magnitude > maxVelocity then
+		return velocity.Unit * maxVelocity
+	end
+	return velocity
+end
+
+local function PushSample(self, targetPlayer, targetPart, prediction)
+	local id = targetPlayer.UserId or targetPlayer.Name
+	local state = self._predictionState[id]
+	if not state then
+		state = { Samples = {} }
+		self._predictionState[id] = state
+	end
+
+	local samples = state.Samples
+	samples[#samples + 1] = {
+		t = os.clock(),
+		pos = targetPart.Position,
+		vel = targetPart.AssemblyLinearVelocity,
+	}
+
+	while #samples > prediction.HistorySize do
+		table.remove(samples, 1)
+	end
+
+	return state
+end
+
+local function EstimateSmoothedVelocity(samples, maxVelocity)
+	local totalWeight = 0
+	local sum = Vector3.new()
+
+	for i = 1, #samples do
+		local age = (#samples - i)
+		local weight = 1 / (age + 1)
+		sum = sum + (ClampVelocity(samples[i].vel, maxVelocity) * weight)
+		totalWeight = totalWeight + weight
+	end
+
+	if totalWeight <= 0 then
+		return Vector3.new()
+	end
+
+	return sum / totalWeight
+end
+
+local function EstimateAcceleration(samples, maxVelocity)
+	if #samples < 2 then
+		return Vector3.new()
+	end
+
+	local totalWeight = 0
+	local sum = Vector3.new()
+
+	for i = 2, #samples do
+		local dt = samples[i].t - samples[i - 1].t
+		if dt > 0 then
+			local vNow = ClampVelocity(samples[i].vel, maxVelocity)
+			local vPrev = ClampVelocity(samples[i - 1].vel, maxVelocity)
+			local accel = (vNow - vPrev) / dt
+			local weight = i / #samples
+			sum = sum + (accel * weight)
+			totalWeight = totalWeight + weight
+		end
+	end
+
+	if totalWeight <= 0 then
+		return Vector3.new()
+	end
+
+	return sum / totalWeight
+end
+
+local function ComputeTurnDamping(samples, prediction)
+	if #samples < 2 then
+		return 1
+	end
+
+	local v1 = samples[#samples - 1].vel
+	local v2 = samples[#samples].vel
+	if v1.Magnitude < 0.5 or v2.Magnitude < 0.5 then
+		return 1
+	end
+
+	local dot = math.clamp(v1.Unit:Dot(v2.Unit), -1, 1)
+	local stability = (dot + 1) * 0.5
+	return prediction.MinTurnDamping + ((1 - prediction.MinTurnDamping) * stability)
+end
+
 local function IsTargetVisible(targetPart, targetCharacter)
 	local localCharacter = GetCharacter()
 	if not localCharacter or not targetPart then
@@ -166,14 +263,39 @@ local function IsTargetVisible(targetPart, targetCharacter)
 	return hit.Instance and targetCharacter and hit.Instance:IsDescendantOf(targetCharacter)
 end
 
-local function BuildPredictedCFrame(targetPart, prediction)
-	local velocity = targetPart.AssemblyLinearVelocity
-	if velocity.Magnitude > prediction.MaxVelocity then
-		velocity = velocity.Unit * prediction.MaxVelocity
+local function BuildPredictedCFrame(self, targetPlayer, targetPart, prediction)
+	local localCharacter = GetCharacter()
+	local localRoot = localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")
+	local shooterPos = localRoot and localRoot.Position or targetPart.Position
+
+	local state = PushSample(self, targetPlayer, targetPart, prediction)
+	local samples = state.Samples
+
+	local currentVelocity = ClampVelocity(targetPart.AssemblyLinearVelocity, prediction.MaxVelocity)
+	local smoothedVelocity = EstimateSmoothedVelocity(samples, prediction.MaxVelocity)
+	local acceleration = EstimateAcceleration(samples, prediction.MaxVelocity)
+
+	local velocity = (currentVelocity * prediction.CurrentVelocityWeight)
+		+ (smoothedVelocity * (1 - prediction.CurrentVelocityWeight))
+
+	local hum = targetPart.Parent and targetPart.Parent:FindFirstChildOfClass("Humanoid")
+	if hum and hum.MoveDirection.Magnitude > 0.01 then
+		local moveVelocity = hum.MoveDirection.Unit * hum.WalkSpeed
+		velocity = (velocity * (1 - prediction.MoveDirectionWeight)) + (moveVelocity * prediction.MoveDirectionWeight)
 	end
 
-	local lead = math.clamp(prediction.ShotDelay + prediction.ExtraDelay, prediction.MinLead, prediction.MaxLead)
-	local predictedPos = targetPart.Position + (velocity * lead)
+	velocity = ClampVelocity(velocity, prediction.MaxVelocity)
+
+	local speed = velocity.Magnitude
+	local distance = (targetPart.Position - shooterPos).Magnitude
+	local horizon = prediction.BaseHorizon + (speed * prediction.SpeedScale) + (distance * prediction.DistanceScale)
+	horizon = math.clamp(horizon, prediction.MinHorizon, prediction.MaxHorizon)
+	horizon = horizon * ComputeTurnDamping(samples, prediction)
+
+	local predictedPos = targetPart.Position
+		+ (velocity * horizon)
+		+ (acceleration * (0.5 * horizon * horizon * prediction.AccelerationWeight))
+
 	return CFrame.new(predictedPos)
 end
 
@@ -225,7 +347,7 @@ function MM2WeaponModule:UseGun(target)
 	end
 
 	if self.Prediction.Enabled then
-		targetCFrame = BuildPredictedCFrame(targetPart, self.Prediction)
+		targetCFrame = BuildPredictedCFrame(self, targetPlayer, targetPart, self.Prediction)
 	end
 
 	-- This bypasses local CantShoot UI logic because we call the remote directly.
