@@ -130,6 +130,9 @@ local TARGET_COMMIT_DISTANCE = 1.2
 local RETARGET_MARGIN_NEAR = 1.8
 local RETARGET_MARGIN_FAR = 3.6
 local COIN_TOUCHED_IGNORE_TIME = 1.0
+local LOCAL_TOUCH_RETARGET_DELAY = 0.02
+local MAX_STUCK_NEAR_TARGET_TIME = 0.9
+local FORCED_TOUCH_DISTANCE = 0.95
 local clearCoinTouchConnections
 
 local bagCurrent = 0
@@ -225,14 +228,38 @@ local function getRoundAlivePlayers()
 	return list
 end
 
-local function getCoinPart(coin)
+local function getCoinTouchParts(coin)
 	if not coin then
-		return nil
+		return {}
 	end
+
+	local allParts = {}
 	if coin:IsA("BasePart") then
-		return coin
+		allParts[1] = coin
+	else
+		for _, desc in ipairs(coin:GetDescendants()) do
+			if desc:IsA("BasePart") then
+				allParts[#allParts + 1] = desc
+			end
+		end
 	end
-	return coin:FindFirstChildWhichIsA("BasePart")
+
+	local touchParts = {}
+	for _, part in ipairs(allParts) do
+		if part:FindFirstChild("TouchInterest") or part:FindFirstChildOfClass("TouchTransmitter") then
+			touchParts[#touchParts + 1] = part
+		end
+	end
+
+	if #touchParts > 0 then
+		return touchParts
+	end
+	return allParts
+end
+
+local function getCoinPart(coin)
+	local parts = getCoinTouchParts(coin)
+	return parts[1]
 end
 
 local function getCoinTargetPosition(coin)
@@ -254,14 +281,12 @@ local function getCoinTargetPosition(coin)
 end
 
 local function coinHasTouchInterest(coin)
-	local part = getCoinPart(coin)
-	if not part then
-		return false
+	for _, part in ipairs(getCoinTouchParts(coin)) do
+		if part:FindFirstChild("TouchInterest") or part:FindFirstChildOfClass("TouchTransmitter") then
+			return true
+		end
 	end
-	if part:FindFirstChild("TouchInterest") then
-		return true
-	end
-	return part:FindFirstChildOfClass("TouchTransmitter") ~= nil
+	return false
 end
 
 local function disconnectCoinTouch(coin)
@@ -269,8 +294,10 @@ local function disconnectCoinTouch(coin)
 	if not entry then
 		return
 	end
-	if entry.connection then
-		entry.connection:Disconnect()
+	if entry.connections then
+		for _, conn in ipairs(entry.connections) do
+			conn:Disconnect()
+		end
 	end
 	coinTouchConnections[coin] = nil
 end
@@ -283,20 +310,16 @@ clearCoinTouchConnections = function()
 end
 
 local function watchCoinTouched(coin)
-	local part = getCoinPart(coin)
-	if not part then
+	local parts = getCoinTouchParts(coin)
+	if #parts == 0 then
 		return
 	end
 
-	local existing = coinTouchConnections[coin]
-	if existing and existing.part == part then
+	if coinTouchConnections[coin] then
 		return
 	end
-	if existing then
-		disconnectCoinTouch(coin)
-	end
 
-	local connection = part.Touched:Connect(function(hit)
+	local function onTouched(hit)
 		local model = hit and hit:FindFirstAncestorOfClass("Model")
 		local toucher = model and Players:GetPlayerFromCharacter(model) or nil
 		if not toucher then
@@ -306,11 +329,16 @@ local function watchCoinTouched(coin)
 			Player = toucher,
 			At = os.clock(),
 		}
-	end)
+	end
+
+	local connections = {}
+	for _, part in ipairs(parts) do
+		connections[#connections + 1] = part.Touched:Connect(onTouched)
+	end
 
 	coinTouchConnections[coin] = {
-		part = part,
-		connection = connection,
+		connections = connections,
+		partCount = #parts,
 	}
 end
 
@@ -348,6 +376,29 @@ local function coinTouchedByLocalRecently(coin, now)
 		return false
 	end
 	return (now - info.At) <= 0.35
+end
+
+local function tryForceTouchCoin(coin, myRoot)
+	if not firetouchinterest or not coin or not myRoot then
+		return false
+	end
+
+	local touchedAny = false
+	for _, part in ipairs(getCoinTouchParts(coin)) do
+		if part and part.Parent then
+			pcall(firetouchinterest, myRoot, part, 0)
+			pcall(firetouchinterest, myRoot, part, 1)
+			touchedAny = true
+		end
+	end
+
+	if touchedAny then
+		coinTouchInfo[coin] = {
+			Player = LocalPlayer,
+			At = os.clock(),
+		}
+	end
+	return touchedAny
 end
 
 local function purgeSkippedCoins(coinContainer)
@@ -908,51 +959,61 @@ task.spawn(function()
 			purgeSkippedCoins(coinContainer)
 			local bestCoin, bestPos, bestDist = getBestSelectableCoin(coinContainer)
 
-			if activeTargetCoin then
-				local now = os.clock()
-				local myRoot = getRoot(LocalPlayer)
-				local elapsed = now - activeTargetAssignedAt
-				local targetPos = activeTargetPos or getCoinTargetPosition(activeTargetCoin)
-				local coinAlive = activeTargetCoin.Parent and activeTargetCoin:IsDescendantOf(coinContainer) and coinHasTouchInterest(activeTargetCoin)
-				local touchedByOther = coinTouchedByOtherRecently(activeTargetCoin, now)
-				local touchedByLocal = coinTouchedByLocalRecently(activeTargetCoin, now)
+				if activeTargetCoin then
+					local now = os.clock()
+					local myRoot = getRoot(LocalPlayer)
+					local elapsed = now - activeTargetAssignedAt
+					local targetPos = activeTargetPos or getCoinTargetPosition(activeTargetCoin)
+					local coinAlive = activeTargetCoin.Parent and activeTargetCoin:IsDescendantOf(coinContainer) and coinHasTouchInterest(activeTargetCoin)
+					local touchedByOther = coinTouchedByOtherRecently(activeTargetCoin, now)
 
-				if (not myRoot) or (not targetPos) then
-					mv:StopGoto()
-					activeTargetCoin = nil
-					activeTargetPos = nil
-				else
-					activeTargetPos = targetPos
-					local dist = (myRoot.Position - targetPos).Magnitude
-					setMoveSpeedForDistance(dist)
-
-					if touchedByOther then
-						skippedCoins[activeTargetCoin] = now + COIN_TOUCHED_IGNORE_TIME
+					if (not myRoot) or (not targetPos) then
 						mv:StopGoto()
 						activeTargetCoin = nil
 						activeTargetPos = nil
 					else
-						local bagIncreased = bagCurrent > activeTargetBagAtStart
-						if not coinAlive then
-							skippedCoins[activeTargetCoin] = now + 0.8
+						activeTargetPos = targetPos
+						local dist = (myRoot.Position - targetPos).Magnitude
+						setMoveSpeedForDistance(dist)
+						if dist <= FORCED_TOUCH_DISTANCE then
+							tryForceTouchCoin(activeTargetCoin, myRoot)
+						end
+						local touchedByLocal = coinTouchedByLocalRecently(activeTargetCoin, now)
+
+						if touchedByOther then
+							skippedCoins[activeTargetCoin] = now + COIN_TOUCHED_IGNORE_TIME
 							mv:StopGoto()
 							activeTargetCoin = nil
 							activeTargetPos = nil
-						elseif bagIncreased then
-							if touchedByLocal or dist <= TARGET_COMMIT_DISTANCE then
-								skippedCoins[activeTargetCoin] = now + 0.12
+						elseif touchedByLocal then
+							-- Immediate retarget after local touch; no idle wait at coin.
+							skippedCoins[activeTargetCoin] = now + LOCAL_TOUCH_RETARGET_DELAY
+							mv:StopGoto()
+							activeTargetCoin = nil
+							activeTargetPos = nil
+							activeTargetBagAtStart = bagCurrent
+						else
+							local bagIncreased = bagCurrent > activeTargetBagAtStart
+							if not coinAlive then
+								skippedCoins[activeTargetCoin] = now + 0.8
 								mv:StopGoto()
 								activeTargetCoin = nil
 								activeTargetPos = nil
-							else
-								-- Another coin may have been collected at the same time; keep target unless close/touched.
-								activeTargetBagAtStart = bagCurrent
-							end
-						elseif elapsed >= 2.5 and dist <= TARGET_COMMIT_DISTANCE then
-							skippedCoins[activeTargetCoin] = now + 0.45
-							mv:StopGoto()
-							activeTargetCoin = nil
-							activeTargetPos = nil
+							elseif bagIncreased then
+								if dist <= TARGET_COMMIT_DISTANCE then
+									skippedCoins[activeTargetCoin] = now + 0.12
+									mv:StopGoto()
+									activeTargetCoin = nil
+									activeTargetPos = nil
+								else
+									-- Another coin may have been collected at the same time; keep target unless close/touched.
+									activeTargetBagAtStart = bagCurrent
+								end
+							elseif elapsed >= MAX_STUCK_NEAR_TARGET_TIME and dist <= TARGET_COMMIT_DISTANCE then
+								skippedCoins[activeTargetCoin] = now + 0.45
+								mv:StopGoto()
+								activeTargetCoin = nil
+								activeTargetPos = nil
 						elseif bestCoin and bestCoin ~= activeTargetCoin and elapsed >= TARGET_MIN_HOLD_TIME then
 							local shouldSwitch = false
 							if dist > TARGET_FOCUS_RANGE and bestDist <= TARGET_FOCUS_RANGE then
