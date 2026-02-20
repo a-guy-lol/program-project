@@ -24,6 +24,9 @@ MoveModule._humanoidRootPart = nil
 MoveModule._bodyVelocity = nil
 MoveModule._enabled = false
 MoveModule._targetPosition = nil
+MoveModule._targetStartedAt = 0
+MoveModule._progressDist = math.huge
+MoveModule._progressAt = 0
 
 MoveModule._originalHumanoidProperties = nil
 
@@ -33,6 +36,12 @@ MoveModule._noclipOriginal = {}
 local function Vector3Lerp(a, b, t)
 	return a + (b - a) * t
 end
+
+local MIN_SNAP_DIST = 0.06
+local MIN_SNAP_EPSILON = 0.003
+local MIN_ARRIVAL_DIST = 0.03
+local STALL_TIMEOUT = 0.22
+local STALL_DIST = 0.35
 
 local function SuppressWalkAnimations(h)
 	for _, tr in ipairs(h:GetPlayingAnimationTracks()) do
@@ -108,6 +117,12 @@ function MoveModule:_RestoreHumanoid()
 	self._originalHumanoidProperties = nil
 end
 
+function MoveModule:_ResetGotoTracking()
+	self._targetStartedAt = 0
+	self._progressDist = math.huge
+	self._progressAt = 0
+end
+
 function MoveModule:_StopMovement(restore)
 	if self._stepConnection then
 		self._stepConnection:Disconnect()
@@ -126,6 +141,7 @@ end
 
 function MoveModule:_UnbindCharacter()
 	self:StopGoto()
+	self:_ResetGotoTracking()
 	self:_StopMovement(false)
 	self:_StopNoclip()
 
@@ -237,6 +253,7 @@ function MoveModule:Enable()
 
 		local tgt = self._targetPosition
 		if not tgt then
+			self:_ResetGotoTracking()
 			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
 			return
 		end
@@ -244,12 +261,24 @@ function MoveModule:Enable()
 		local pos = self._humanoidRootPart.Position
 		local to = tgt - pos
 		local dist = to.Magnitude
+		local now = os.clock()
 
-		if dist <= self.Config.snapDist then
+		local snapDist = math.max(tonumber(self.Config.snapDist) or 0, MIN_SNAP_DIST)
+		local snapEpsilon = math.max(tonumber(self.Config.snapEpsilon) or 0, MIN_SNAP_EPSILON)
+		local arrivalDist = math.max(tonumber(self.Config.arrivalDist) or 0, MIN_ARRIVAL_DIST)
+
+		-- Track movement progress so we can recover from micro-stalls near destination.
+		if dist < (self._progressDist - 0.005) then
+			self._progressDist = dist
+			self._progressAt = now
+		end
+
+		if dist <= snapDist then
 			self._humanoidRootPart.CFrame = CFrame.new(tgt)
 			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-			if (self._humanoidRootPart.Position - tgt).Magnitude <= self.Config.snapEpsilon then
+			if (self._humanoidRootPart.Position - tgt).Magnitude <= snapEpsilon then
 				self._targetPosition = nil
+				self:_ResetGotoTracking()
 			end
 			return
 		end
@@ -268,9 +297,19 @@ function MoveModule:Enable()
 		local a = math.clamp(self.Config.smoothRate * dt, 0, 1)
 		self._bodyVelocity.Velocity = Vector3Lerp(self._bodyVelocity.Velocity, tv, a)
 
-		if dist <= self.Config.arrivalDist then
+		if dist <= arrivalDist then
 			self._targetPosition = nil
+			self:_ResetGotoTracking()
 			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+			return
+		end
+
+		-- Stuck safeguard: if we stop making progress near target, hard-center and finish.
+		if dist <= STALL_DIST and self._progressAt > 0 and (now - self._progressAt) >= STALL_TIMEOUT then
+			self._humanoidRootPart.CFrame = CFrame.new(tgt)
+			self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+			self._targetPosition = nil
+			self:_ResetGotoTracking()
 		end
 	end)
 
@@ -287,7 +326,11 @@ function MoveModule:Goto(p)
 	end
 
 	self._targetPosition = p
+	self._targetStartedAt = os.clock()
+	self._progressDist = math.huge
+	self._progressAt = self._targetStartedAt
 	local want = p
+	local doneEpsilon = math.max(tonumber(self.Config.snapEpsilon) or 0, MIN_SNAP_EPSILON)
 
 	while true do
 		if not self._enabled then
@@ -295,7 +338,7 @@ function MoveModule:Goto(p)
 		end
 
 		if self._targetPosition == nil then
-			if (self._humanoidRootPart.Position - want).Magnitude <= self.Config.snapEpsilon then
+			if (self._humanoidRootPart.Position - want).Magnitude <= doneEpsilon then
 				return true
 			end
 			return false, "stopped"
@@ -311,6 +354,7 @@ end
 
 function MoveModule:StopGoto()
 	self._targetPosition = nil
+	self:_ResetGotoTracking()
 	if self._enabled and self._bodyVelocity and self._bodyVelocity.Parent then
 		self._bodyVelocity.Velocity = Vector3.new(0, 0, 0)
 	end
@@ -322,6 +366,7 @@ function MoveModule:Disable()
 	end
 	self._enabled = false
 	self:StopGoto()
+	self:_ResetGotoTracking()
 	self:_StopMovement(true)
 	self:_StopNoclip()
 end

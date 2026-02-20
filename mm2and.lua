@@ -11,14 +11,79 @@ local mm2RoundClient = loadstring(game:HttpGet("https://raw.githubusercontent.co
 local mm2WeaponClient = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/mm2WeaponModule.lua"))()
 local mv = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/moveVelocityModule.lua"))()
 
+local PLATFORM_POS = Vector3.new(200, 500, 200)
+local PLATFORM_NAME = "MM2And_SafePlatform"
+
+local function getRoot(player)
+	if not player or not player.Character then
+		return nil
+	end
+	return player.Character:FindFirstChild("HumanoidRootPart")
+		or player.Character:FindFirstChild("Head")
+		or player.Character.PrimaryPart
+end
+
+local function isAlive(player)
+	if not player or not player.Character then
+		return false
+	end
+	local hum = player.Character:FindFirstChildOfClass("Humanoid")
+	return hum and hum.Health > 0
+end
+
+local function ensureSafePlatform()
+	local platform = workspace:FindFirstChild(PLATFORM_NAME)
+	if platform and platform:IsA("Part") then
+		platform.CFrame = CFrame.new(PLATFORM_POS)
+		return platform
+	end
+
+	platform = Instance.new("Part")
+	platform.Name = PLATFORM_NAME
+	platform.Anchored = true
+	platform.CanCollide = true
+	platform.Size = Vector3.new(36, 1, 36)
+	platform.Transparency = 0.2
+	platform.Material = Enum.Material.SmoothPlastic
+	platform.Color = Color3.fromRGB(30, 30, 30)
+	platform.CFrame = CFrame.new(PLATFORM_POS)
+	platform.Parent = workspace
+	return platform
+end
+
+local lastPlatformTeleportAt = 0
+local PLATFORM_TP_COOLDOWN = 1.25
+
+local function teleportToPlatform(force)
+	local myRoot = getRoot(LocalPlayer)
+	if not myRoot then
+		return
+	end
+
+	ensureSafePlatform()
+
+	local now = os.clock()
+	if (not force) and (now - lastPlatformTeleportAt < PLATFORM_TP_COOLDOWN) then
+		return
+	end
+
+	local target = PLATFORM_POS + Vector3.new(0, 3, 0)
+	if (myRoot.Position - target).Magnitude <= 1 then
+		return
+	end
+
+	myRoot.CFrame = CFrame.new(target)
+	lastPlatformTeleportAt = now
+end
+
 mv:SetConfig({
 	minSpeed = 17.5,
 	maxSpeed = 17.5,
 	brakeStart = 10,
-	arrivalDist = 0.01,
+	arrivalDist = 0,
 	smoothRate = 16,
-	snapDist = 0.12,
-	snapEpsilon = 0.002,
+	snapDist = 0,
+	snapEpsilon = 0,
 })
 
 local UI = ZexonUI:CreateWindow("<font color=\"#1CB2F5\">MM2 And</font>", "Round + Weapons", false)
@@ -46,27 +111,47 @@ local bagMax = 0
 
 local lastAutoKnifeAllAt = 0
 local lastAutoHandleAt = 0
+local prevRoundActive = false
 
-local function getRoot(player)
-	if not player or not player.Character then
-		return nil
+local function stopCoinMovement(disableAll)
+	mv:StopGoto()
+	activeTargetCoin = nil
+	activeTargetPos = nil
+	activeTargetAssignedAt = 0
+	activeTargetBagAtStart = bagCurrent
+
+	if disableAll and coinMoveEnabled then
+		mv:Disable()
+		coinMoveEnabled = false
 	end
-	return player.Character:FindFirstChild("HumanoidRootPart")
-		or player.Character:FindFirstChild("Head")
-		or player.Character.PrimaryPart
 end
 
-local function isAlive(player)
-	if not player or not player.Character then
-		return false
+local function ensureCoinMovementEnabled()
+	if coinMoveEnabled then
+		return true
 	end
-	local hum = player.Character:FindFirstChildOfClass("Humanoid")
-	return hum and hum.Health > 0
+	local ok = mv:Enable()
+	if ok then
+		coinMoveEnabled = true
+	end
+	return ok
 end
 
-local function isLocalMurderer()
-	local roles = mm2RoundClient:GetRoundRoles()
-	return roles and roles.Murderer == LocalPlayer
+local function setMoveSpeedForDistance(distance)
+	local maxSpeed = 17.5
+	if distance > 10 then
+		maxSpeed = math.clamp(17.5 + ((distance - 10) * 0.5), 17.5, 25)
+	end
+
+	mv:SetConfig({
+		minSpeed = 17.5,
+		maxSpeed = maxSpeed,
+		brakeStart = math.max(distance * 0.6, 10),
+		arrivalDist = 0,
+		smoothRate = 16,
+		snapDist = 0,
+		snapEpsilon = 0,
+	})
 end
 
 local function getRoundAlivePlayers()
@@ -125,49 +210,6 @@ local function getCoinTargetPosition(coin)
 	return part and part.Position or nil
 end
 
-local function stopCoinMovement(disableAll)
-	mv:StopGoto()
-	activeTargetCoin = nil
-	activeTargetPos = nil
-	activeTargetAssignedAt = 0
-	activeTargetBagAtStart = bagCurrent
-
-	if disableAll and coinMoveEnabled then
-		mv:Disable()
-		coinMoveEnabled = false
-	end
-end
-
-local function ensureCoinMovementEnabled()
-	if coinMoveEnabled then
-		return true
-	end
-	local ok = mv:Enable()
-	if ok then
-		coinMoveEnabled = true
-	end
-	return ok
-end
-
-local function setMoveSpeedForDistance(distance)
-	local minSpeed = 17.5
-	local maxSpeed = 17.5
-
-	if distance > 10 then
-		maxSpeed = math.clamp(17.5 + ((distance - 10) * 0.5), 17.5, 25)
-	end
-
-	mv:SetConfig({
-		minSpeed = minSpeed,
-		maxSpeed = maxSpeed,
-		brakeStart = math.max(distance * 0.6, 10),
-		arrivalDist = 0.01,
-		smoothRate = 16,
-		snapDist = 0.12,
-		snapEpsilon = 0.002,
-	})
-end
-
 local function coinHasTouchInterest(coin)
 	local part = getCoinPart(coin)
 	if not part then
@@ -192,7 +234,7 @@ local function isCoinSelectable(coin, coinContainer)
 	if not coin or not coin.Parent then
 		return false
 	end
-	if coinContainer and (not coin:IsDescendantOf(coinContainer)) then
+	if coinContainer and not coin:IsDescendantOf(coinContainer) then
 		return false
 	end
 	if skippedCoins[coin] and skippedCoins[coin] > os.clock() then
@@ -204,44 +246,22 @@ local function isCoinSelectable(coin, coinContainer)
 	return getCoinTargetPosition(coin) ~= nil
 end
 
-local function getNextCoin(coinContainer)
+local function getNearestSelectableCoin(coinContainer)
 	local myRoot = getRoot(LocalPlayer)
 	if not myRoot or not coinContainer then
 		return nil
 	end
 
-	local others = {}
-	for _, p in ipairs(getRoundAlivePlayers()) do
-		local r = getRoot(p)
-		if r then
-			others[#others + 1] = r
-		end
-	end
-
 	local bestCoin = nil
-	local bestScore = math.huge
+	local bestDist = math.huge
 
 	for _, coin in ipairs(coinContainer:GetChildren()) do
 		if isCoinSelectable(coin, coinContainer) then
-			local coinPos = getCoinTargetPosition(coin)
-			if coinPos then
-				local myDist = (coinPos - myRoot.Position).Magnitude
-				local nearestOther = math.huge
-				for _, otherRoot in ipairs(others) do
-					local d = (coinPos - otherRoot.Position).Magnitude
-					if d < nearestOther then
-						nearestOther = d
-					end
-				end
-
-				local contestedPenalty = 0
-				if nearestOther <= myDist + 2 then
-					contestedPenalty = 400
-				end
-
-				local score = myDist + contestedPenalty
-				if score < bestScore then
-					bestScore = score
+			local pos = getCoinTargetPosition(coin)
+			if pos then
+				local dist = (myRoot.Position - pos).Magnitude
+				if dist < bestDist then
+					bestDist = dist
 					bestCoin = coin
 				end
 			end
@@ -285,10 +305,13 @@ local function tryAutoHandleMurder()
 		return
 	end
 
-	local offset = math.random(3, 5)
-	local behind = targetRoot.CFrame * CFrame.new(0, 0, offset)
+	local safeBehind = math.random(5, 6)
+	local behind = targetRoot.CFrame * CFrame.new(0, 0, safeBehind)
 	myRoot.CFrame = CFrame.new(behind.Position, targetRoot.Position)
+	task.wait(0.03)
 	mm2WeaponClient:UseGun(murderer)
+	task.wait(0.06)
+	teleportToPlatform(true)
 end
 
 local function tryAutoCollectGunDrop(map)
@@ -359,7 +382,7 @@ local CombatSection = CombatTab:CreateSection("MM2 Controls")
 
 CombatSection:CreateParagraph(
 	"MM2 Panel",
-	"Shoot keybind targets murderer. Knife All keybind hits all alive players if you are murderer. Nearby Knife can auto-hit nearby round players.",
+	"Shoot keybind targets murderer. Knife All keybind hits all alive players if murderer. Auto Handle Murder runs after bag is full.",
 	5
 )
 
@@ -369,7 +392,6 @@ CombatSection:CreateToggle("Gun Prediction", {
 }, function(state)
 	gunPredictionEnabled = state
 	mm2WeaponClient:TogglePrediction(state)
-	UI:AddNoti("Gun Prediction", state and "Enabled" or "Disabled", 2)
 end)
 
 CombatSection:CreateKeybind("Shoot", Enum.KeyCode.F, function()
@@ -381,23 +403,18 @@ CombatSection:CreateKeybind("Knife All", Enum.KeyCode.G, function()
 		UI:AddNoti("Knife All", "Only works when you are murderer.", 2)
 		return
 	end
-	local ok, result = mm2WeaponClient:UseKnifeAll()
-	if not ok then
-		UI:AddNoti("Knife All Failed", tostring(result), 2)
-	else
-		UI:AddNoti("Knife All", "Hit players: " .. tostring(result), 2)
-	end
+	mm2WeaponClient:UseKnifeAll()
 end)
 
 CombatSection:CreateToggle("Auto Knife All", {
-	Description = "When coin collection is ON and bag is full, auto uses Knife All.",
+	Description = "When collection is ON and bag full, auto uses Knife All.",
 	Toggled = false,
 }, function(state)
 	autoKnifeAllEnabled = state
 end)
 
 CombatSection:CreateToggle("Auto Handle Murder", {
-	Description = "When coin collection is ON and bag is full, teleports behind murderer and shoots.",
+	Description = "After bag full: teleport behind murderer, shoot, return to platform; repeat until dead.",
 	Toggled = false,
 }, function(state)
 	autoHandleMurderEnabled = state
@@ -422,17 +439,19 @@ local CoinTab = UI:CreatePage("CoinCollection")
 local CoinSection = CoinTab:CreateSection("Collection")
 
 CoinSection:CreateToggle("OptimizedCoinCollection", {
-	Description = "Collects nearest safe coins, retargets fast, and stops on round end/full bag.",
+	Description = "Collect nearest valid coins with center-touch enforcement.",
 	Toggled = false,
 }, function(state)
 	optimizedCoinCollectionEnabled = state
-	if not state then
+	if state then
+		ensureSafePlatform()
+	else
 		stopCoinMovement(true)
 	end
 end)
 
 CoinSection:CreateToggle("Auto Collect GunDrop", {
-	Description = "When GunDrop appears in map, pulls it to you and triggers touch.",
+	Description = "When GunDrop appears, move it to your rootpart and touch it.",
 	Toggled = false,
 }, function(state)
 	autoCollectGunDropEnabled = state
@@ -440,7 +459,7 @@ end)
 
 CoinSection:CreateParagraph(
 	"Notes",
-	"Coin speed is dynamic: 17.5 minimum, up to 25 when far. At 10 studs and below it stays at 17.5 for safer coin touches.",
+	"Speed is dynamic 17.5 to 25 while far, never below 17.5. Platform teleports are throttled and only used when needed.",
 	4
 )
 
@@ -482,18 +501,28 @@ end)
 task.spawn(function()
 	while task.wait(0.03) do
 		local roundActive = mm2RoundClient:IsRoundActive()
+		local localInRound = roundActive and mm2RoundClient:IsPlayerInRound(LocalPlayer) and isAlive(LocalPlayer)
+
+		if prevRoundActive and not roundActive and optimizedCoinCollectionEnabled then
+			stopCoinMovement(true)
+			teleportToPlatform(true)
+			bagCurrent = 0
+		end
+		prevRoundActive = roundActive
 
 		if not optimizedCoinCollectionEnabled then
 			stopCoinMovement(true)
-			if not roundActive then
-				bagCurrent = 0
-			end
+			continue
+		end
+
+		if roundActive and not localInRound then
+			stopCoinMovement(true)
+			teleportToPlatform(false)
 			continue
 		end
 
 		if not roundActive then
 			stopCoinMovement(true)
-			bagCurrent = 0
 			continue
 		end
 
@@ -513,16 +542,15 @@ task.spawn(function()
 
 		if bagMax > 0 and bagCurrent >= bagMax then
 			stopCoinMovement(true)
+			teleportToPlatform(false)
 
 			local now = os.clock()
-			if autoKnifeAllEnabled and (now - lastAutoKnifeAllAt) >= 0.5 then
+			if autoKnifeAllEnabled and (now - lastAutoKnifeAllAt) >= 0.5 and isLocalMurderer() then
 				lastAutoKnifeAllAt = now
-				if isLocalMurderer() then
-					mm2WeaponClient:UseKnifeAll()
-				end
+				mm2WeaponClient:UseKnifeAll()
 			end
 
-			if autoHandleMurderEnabled and (now - lastAutoHandleAt) >= 0.65 then
+			if autoHandleMurderEnabled and (now - lastAutoHandleAt) >= 0.7 then
 				lastAutoHandleAt = now
 				tryAutoHandleMurder()
 			end
@@ -552,34 +580,25 @@ task.spawn(function()
 				setMoveSpeedForDistance(dist)
 
 				local bagIncreased = bagCurrent > activeTargetBagAtStart
-
 				if bagIncreased then
-					-- Keep moving to center when local pickup happened, then retarget quickly.
-					if dist <= 0.12 then
+					if dist <= 0.03 or elapsed >= 0.35 then
 						skippedCoins[activeTargetCoin] = os.clock() + 0.2
-						mv:StopGoto()
-						activeTargetCoin = nil
-						activeTargetPos = nil
-					elseif elapsed >= 0.95 then
-						-- Failsafe if center is somehow never reached.
-						skippedCoins[activeTargetCoin] = os.clock() + 0.35
 						mv:StopGoto()
 						activeTargetCoin = nil
 						activeTargetPos = nil
 					end
 				else
-					-- Target was likely taken by others or became stale.
 					if not coinAlive then
 						skippedCoins[activeTargetCoin] = os.clock() + 0.9
 						mv:StopGoto()
 						activeTargetCoin = nil
 						activeTargetPos = nil
-					elseif elapsed >= 0.7 and dist <= 0.9 then
+					elseif elapsed >= 1.1 and dist <= 1.0 then
 						skippedCoins[activeTargetCoin] = os.clock() + 0.9
 						mv:StopGoto()
 						activeTargetCoin = nil
 						activeTargetPos = nil
-					elseif elapsed >= 1.4 and dist <= 1.8 then
+					elseif elapsed >= 1.8 and dist <= 2.0 then
 						skippedCoins[activeTargetCoin] = os.clock() + 0.9
 						mv:StopGoto()
 						activeTargetCoin = nil
@@ -590,7 +609,7 @@ task.spawn(function()
 		end
 
 		if not activeTargetCoin then
-			local nextCoin = getNextCoin(coinContainer)
+			local nextCoin = getNearestSelectableCoin(coinContainer)
 			if nextCoin then
 				local nextPos = getCoinTargetPosition(nextCoin)
 				if nextPos then

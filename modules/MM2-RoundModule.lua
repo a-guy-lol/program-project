@@ -26,6 +26,14 @@ local function HasTool(player, toolName)
     return false
 end
 
+local function IsPlayerAlive(player)
+    if not player or not player.Character then
+        return false
+    end
+    local hum = player.Character:FindFirstChildOfClass("Humanoid")
+    return hum and hum.Health > 0
+end
+
 local function IsLikelyMap(instance)
     if not instance or instance.Parent ~= Workspace then
         return false
@@ -56,24 +64,57 @@ local function GetRootPositionFromSource(source)
     return nil
 end
 
+local function GetCoinPart(coin)
+    if not coin then
+        return nil
+    end
+    if coin:IsA("BasePart") then
+        return coin
+    end
+    return coin:FindFirstChildWhichIsA("BasePart")
+end
+
+local function CoinHasTouchInterest(coin)
+    local part = GetCoinPart(coin)
+    if not part then
+        return false
+    end
+    if part:FindFirstChild("TouchInterest") then
+        return true
+    end
+    return part:FindFirstChildOfClass("TouchTransmitter") ~= nil
+end
+
+local function GetCoinPosition(coin)
+    if not coin then
+        return nil
+    end
+    if coin:IsA("Model") then
+        local cf = coin:GetBoundingBox()
+        return cf.Position
+    end
+    local part = GetCoinPart(coin)
+    return part and part.Position or nil
+end
+
 -- [[ PUBLIC FUNCTIONS ]] --
 
 -- 1. Check if the round is currently active
 function MM2Data:IsRoundActive()
+    local map = self:GetMap()
+    if map and map:FindFirstChild("CoinContainer") then
+        return true
+    end
+
     if CurrentRoundClient and CurrentRoundClient.PlayerData then
-        -- If the game's internal table has data, the round is likely active
-        for _, _ in pairs(CurrentRoundClient.PlayerData) do
-            return true
+        -- Only count non-dead entries as active round.
+        for _, data in pairs(CurrentRoundClient.PlayerData) do
+            if not data.Dead then
+                return true
+            end
         end
     end
-    
-    -- Fallback: If anyone has a gun/knife, round is active
-    for _, p in ipairs(Players:GetPlayers()) do
-        if HasTool(p, "Knife") or HasTool(p, "Gun") then
-            return true
-        end
-    end
-    
+
     return false
 end
 
@@ -125,6 +166,9 @@ end
 -- 3. Check if a specific player (or LocalPlayer) is alive in the round
 function MM2Data:IsPlayerInRound(player)
     if not player then player = LocalPlayer end -- Default to LocalPlayer
+    if not IsPlayerAlive(player) then
+        return false
+    end
     
     if CurrentRoundClient and CurrentRoundClient.PlayerData then
         local data = CurrentRoundClient.PlayerData[player.Name]
@@ -133,13 +177,18 @@ function MM2Data:IsPlayerInRound(player)
         end
     end
     
-    -- Fallback: If they are in the map area (usually not in lobby)
-    -- or simply if they have a role-based weapon.
-    if HasTool(player, "Knife") or HasTool(player, "Gun") then
+    -- Fallback: only consider alive players with role tools while round is active.
+    if self:IsRoundActive() and (HasTool(player, "Knife") or HasTool(player, "Gun")) then
         return true
     end
     
     return false
+end
+
+-- 6. Check if round has truly started (coins spawned in map)
+function MM2Data:IsRoundStarted()
+    local map = self:GetMap()
+    return map and map:FindFirstChild("CoinContainer") ~= nil
 end
 
 -- 4. Get current round map (direct child of workspace with MapID attribute)
@@ -185,16 +234,14 @@ function MM2Data:GetNearestCoin(fromSource)
     local nearestDistance = math.huge
 
     for _, coin in ipairs(coinContainer:GetChildren()) do
-        local coinPart = coin
-        if not coinPart:IsA("BasePart") then
-            coinPart = coin:FindFirstChildWhichIsA("BasePart")
-        end
-
-        if coinPart and coinPart:IsA("BasePart") then
-            local dist = (coinPart.Position - origin).Magnitude
-            if dist < nearestDistance then
-                nearestCoin = coin
-                nearestDistance = dist
+        if CoinHasTouchInterest(coin) then
+            local coinPos = GetCoinPosition(coin)
+            if coinPos then
+                local dist = (coinPos - origin).Magnitude
+                if dist < nearestDistance then
+                    nearestCoin = coin
+                    nearestDistance = dist
+                end
             end
         end
     end
