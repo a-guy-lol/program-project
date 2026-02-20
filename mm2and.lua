@@ -15,10 +15,10 @@ mv:SetConfig({
 	minSpeed = 17.5,
 	maxSpeed = 17.5,
 	brakeStart = 10,
-	arrivalDist = 0.25,
+	arrivalDist = 0.01,
 	smoothRate = 16,
-	snapDist = 0.6,
-	snapEpsilon = 0.03,
+	snapDist = 0.12,
+	snapEpsilon = 0.002,
 })
 
 local UI = ZexonUI:CreateWindow("<font color=\"#1CB2F5\">MM2 And</font>", "Round + Weapons", false)
@@ -36,6 +36,7 @@ local autoCollectGunDropEnabled = false
 
 local coinMoveEnabled = false
 local activeTargetCoin = nil
+local activeTargetPos = nil
 local activeTargetAssignedAt = 0
 local activeTargetBagAtStart = 0
 local skippedCoins = {}
@@ -127,6 +128,7 @@ end
 local function stopCoinMovement(disableAll)
 	mv:StopGoto()
 	activeTargetCoin = nil
+	activeTargetPos = nil
 	activeTargetAssignedAt = 0
 	activeTargetBagAtStart = bagCurrent
 
@@ -159,11 +161,22 @@ local function setMoveSpeedForDistance(distance)
 		minSpeed = minSpeed,
 		maxSpeed = maxSpeed,
 		brakeStart = math.max(distance * 0.6, 10),
-		arrivalDist = 0.25,
+		arrivalDist = 0.01,
 		smoothRate = 16,
-		snapDist = 0.6,
-		snapEpsilon = 0.03,
+		snapDist = 0.12,
+		snapEpsilon = 0.002,
 	})
+end
+
+local function coinHasTouchInterest(coin)
+	local part = getCoinPart(coin)
+	if not part then
+		return false
+	end
+	if part:FindFirstChild("TouchInterest") then
+		return true
+	end
+	return part:FindFirstChildOfClass("TouchTransmitter") ~= nil
 end
 
 local function purgeSkippedCoins()
@@ -183,6 +196,9 @@ local function isCoinSelectable(coin, coinContainer)
 		return false
 	end
 	if skippedCoins[coin] and skippedCoins[coin] > os.clock() then
+		return false
+	end
+	if not coinHasTouchInterest(coin) then
 		return false
 	end
 	return getCoinTargetPosition(coin) ~= nil
@@ -297,7 +313,7 @@ local function tryAutoCollectGunDrop(map)
 		return
 	end
 
-	gunPart.CFrame = myRoot.CFrame * CFrame.new(0, 0, -1.5)
+	gunPart.CFrame = myRoot.CFrame
 
 	if firetouchinterest then
 		pcall(firetouchinterest, myRoot, gunPart, 0)
@@ -520,37 +536,54 @@ task.spawn(function()
 
 		purgeSkippedCoins()
 
-		if activeTargetCoin and (not activeTargetCoin.Parent or not activeTargetCoin:IsDescendantOf(coinContainer)) then
-			mv:StopGoto()
-			activeTargetCoin = nil
-		end
-
 		if activeTargetCoin then
-			if bagCurrent > activeTargetBagAtStart then
-				skippedCoins[activeTargetCoin] = os.clock() + 0.2
+			local myRoot = getRoot(LocalPlayer)
+			local elapsed = os.clock() - activeTargetAssignedAt
+			local targetPos = activeTargetPos or getCoinTargetPosition(activeTargetCoin)
+			local coinAlive = activeTargetCoin.Parent and activeTargetCoin:IsDescendantOf(coinContainer) and coinHasTouchInterest(activeTargetCoin)
+
+			if (not myRoot) or (not targetPos) then
 				mv:StopGoto()
 				activeTargetCoin = nil
+				activeTargetPos = nil
 			else
-				local myRoot = getRoot(LocalPlayer)
-				local targetPos = getCoinTargetPosition(activeTargetCoin)
-				local elapsed = os.clock() - activeTargetAssignedAt
+				activeTargetPos = targetPos
+				local dist = (myRoot.Position - targetPos).Magnitude
+				setMoveSpeedForDistance(dist)
 
-				if (not myRoot) or (not targetPos) then
-					mv:StopGoto()
-					activeTargetCoin = nil
+				local bagIncreased = bagCurrent > activeTargetBagAtStart
+
+				if bagIncreased then
+					-- Keep moving to center when local pickup happened, then retarget quickly.
+					if dist <= 0.12 then
+						skippedCoins[activeTargetCoin] = os.clock() + 0.2
+						mv:StopGoto()
+						activeTargetCoin = nil
+						activeTargetPos = nil
+					elseif elapsed >= 0.95 then
+						-- Failsafe if center is somehow never reached.
+						skippedCoins[activeTargetCoin] = os.clock() + 0.35
+						mv:StopGoto()
+						activeTargetCoin = nil
+						activeTargetPos = nil
+					end
 				else
-					local dist = (myRoot.Position - targetPos).Magnitude
-					setMoveSpeedForDistance(dist)
-
-					if elapsed >= 0.6 and dist <= 0.9 then
-						-- If we reached center-ish but no bag update, skip this coin shortly.
+					-- Target was likely taken by others or became stale.
+					if not coinAlive then
 						skippedCoins[activeTargetCoin] = os.clock() + 0.9
 						mv:StopGoto()
 						activeTargetCoin = nil
-					elseif elapsed >= 1.3 and dist <= 1.8 then
+						activeTargetPos = nil
+					elseif elapsed >= 0.7 and dist <= 0.9 then
 						skippedCoins[activeTargetCoin] = os.clock() + 0.9
 						mv:StopGoto()
 						activeTargetCoin = nil
+						activeTargetPos = nil
+					elseif elapsed >= 1.4 and dist <= 1.8 then
+						skippedCoins[activeTargetCoin] = os.clock() + 0.9
+						mv:StopGoto()
+						activeTargetCoin = nil
+						activeTargetPos = nil
 					end
 				end
 			end
@@ -567,6 +600,7 @@ task.spawn(function()
 					end
 
 					activeTargetCoin = nextCoin
+					activeTargetPos = nextPos
 					activeTargetAssignedAt = os.clock()
 					activeTargetBagAtStart = bagCurrent
 					mv:StopGoto()
