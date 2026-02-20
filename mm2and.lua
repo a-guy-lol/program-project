@@ -1,13 +1,25 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 
 local ZexonUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/zexonUI.lua"))()
 
--- User asked for mm2RoundClient + mm2WeaponClient usage; these names are kept here.
+-- Requested module names.
 local mm2RoundClient = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/MM2-RoundModule.lua"))()
 local mm2WeaponClient = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/mm2WeaponModule.lua"))()
+local mv = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/moveVelocityModule.lua"))()
+
+mv:SetConfig({
+	minSpeed = 17.5,
+	maxSpeed = 17.5,
+	brakeStart = 9999,
+	arrivalDist = 1.0,
+	smoothRate = 16,
+	snapDist = 1.25,
+	snapEpsilon = 0.05,
+})
 
 local UI = ZexonUI:CreateWindow("<font color=\"#1CB2F5\">MM2 And</font>", "Round + Weapons", false)
 
@@ -16,6 +28,13 @@ local nearbyKnifeEnabled = false
 local nearbyKnifeRange = 0
 local nearbyKnifeCooldown = 0.2
 local lastKnifeAt = {}
+
+local optimizedCoinCollectionEnabled = false
+local coinMoveEnabled = false
+local activeTargetCoin = nil
+
+local bagCurrent = 0
+local bagMax = 0
 
 local function getRoot(player)
 	if not player or not player.Character then
@@ -71,6 +90,37 @@ local function getRoundAlivePlayers()
 	return list
 end
 
+local function getCoinPart(coin)
+	if not coin then
+		return nil
+	end
+	if coin:IsA("BasePart") then
+		return coin
+	end
+	return coin:FindFirstChildWhichIsA("BasePart")
+end
+
+local function stopCoinMovement(disableAll)
+	mv:StopGoto()
+	activeTargetCoin = nil
+
+	if disableAll and coinMoveEnabled then
+		mv:Disable()
+		coinMoveEnabled = false
+	end
+end
+
+local function ensureCoinMovementEnabled()
+	if coinMoveEnabled then
+		return true
+	end
+	local ok = mv:Enable()
+	if ok then
+		coinMoveEnabled = true
+	end
+	return ok
+end
+
 local function shootMurderer()
 	local roles = mm2RoundClient:GetRoundRoles()
 	local murderer = roles and roles.Murderer
@@ -84,6 +134,39 @@ local function shootMurderer()
 		UI:AddNoti("Shoot Failed", tostring(reason), 2)
 	end
 end
+
+-- Coin bag tracker from the provided coinBagClient pattern.
+task.spawn(function()
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
+	if not remotes then
+		return
+	end
+
+	local gameplay = remotes:WaitForChild("Gameplay", 30)
+	if not gameplay then
+		return
+	end
+
+	local coinCollected = gameplay:WaitForChild("CoinCollected", 30)
+	local coinsStarted = gameplay:WaitForChild("CoinsStarted", 30)
+
+	if coinCollected and coinCollected:IsA("RemoteEvent") then
+		coinCollected.OnClientEvent:Connect(function(_, current, max)
+			if type(current) == "number" then
+				bagCurrent = current
+			end
+			if type(max) == "number" then
+				bagMax = max
+			end
+		end)
+	end
+
+	if coinsStarted and coinsStarted:IsA("RemoteEvent") then
+		coinsStarted.OnClientEvent:Connect(function()
+			bagCurrent = 0
+		end)
+	end
+end)
 
 local MainTab = UI:CreatePage("Combat")
 local MainSection = MainTab:CreateSection("MM2 Controls")
@@ -135,19 +218,29 @@ MainSection:CreateSlider("Nearby Knife", {
 	nearbyKnifeRange = value
 end)
 
+MainSection:CreateToggle("OptimizedCoinCollection", {
+	Description = "Auto collect nearest coins at 17.5 speed while in active round.",
+	Toggled = false,
+}, function(state)
+	optimizedCoinCollectionEnabled = state
+	if not state then
+		stopCoinMovement(true)
+	end
+end)
+
 MainSection:CreateParagraph(
 	"Notes",
-	"Nearby Knife is disabled if toggle is off OR slider is 0. It also requires you to be the murderer.",
-	4
+	"Nearby Knife is disabled if toggle is off OR slider is 0. OptimizedCoinCollection waits for round + map + CoinContainer, retargets if coin disappears, and pauses when bag is full.",
+	5
 )
 
-local accumulator = 0
+local knifeAccumulator = 0
 RunService.Heartbeat:Connect(function(dt)
-	accumulator = accumulator + dt
-	if accumulator < 0.12 then
+	knifeAccumulator = knifeAccumulator + dt
+	if knifeAccumulator < 0.12 then
 		return
 	end
-	accumulator = 0
+	knifeAccumulator = 0
 
 	if not nearbyKnifeEnabled or nearbyKnifeRange <= 0 then
 		return
@@ -171,6 +264,64 @@ RunService.Heartbeat:Connect(function(dt)
 					mm2WeaponClient:UseKnife(p)
 					lastKnifeAt[p] = now
 				end
+			end
+		end
+	end
+end)
+
+task.spawn(function()
+	while task.wait(0.1) do
+		local roundActive = mm2RoundClient:IsRoundActive()
+
+		if not optimizedCoinCollectionEnabled then
+			stopCoinMovement(true)
+			if not roundActive then
+				bagCurrent = 0
+			end
+			continue
+		end
+
+		if not roundActive then
+			stopCoinMovement(true)
+			bagCurrent = 0
+			continue
+		end
+
+		local map = mm2RoundClient:GetMap()
+		local coinContainer = map and map:FindFirstChild("CoinContainer")
+		if not coinContainer then
+			stopCoinMovement(true)
+			continue
+		end
+
+		if bagMax > 0 and bagCurrent >= bagMax then
+			stopCoinMovement(true)
+			continue
+		end
+
+		if not ensureCoinMovementEnabled() then
+			continue
+		end
+
+		if activeTargetCoin and (not activeTargetCoin.Parent or not activeTargetCoin:IsDescendantOf(coinContainer)) then
+			-- Coin was taken/removed, pick a new one.
+			mv:StopGoto()
+			activeTargetCoin = nil
+		end
+
+		if not activeTargetCoin then
+			local nearestCoin = mm2RoundClient:GetNearestCoin(LocalPlayer)
+			if nearestCoin then
+				local targetPart = getCoinPart(nearestCoin)
+				if targetPart then
+					activeTargetCoin = nearestCoin
+					mv:StopGoto()
+					task.spawn(function()
+						mv:Goto(targetPart.Position)
+					end)
+				end
+			else
+				stopCoinMovement(true)
 			end
 		end
 	end

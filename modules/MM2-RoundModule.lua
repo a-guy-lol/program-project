@@ -4,6 +4,7 @@ local MM2Data = {}
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
 -- Internal Variables
@@ -23,6 +24,36 @@ local function HasTool(player, toolName)
     if backpack and backpack:FindFirstChild(toolName) then return true end
     if character and character:FindFirstChild(toolName) then return true end
     return false
+end
+
+local function IsLikelyMap(instance)
+    if not instance or instance.Parent ~= Workspace then
+        return false
+    end
+    local mapId = instance:GetAttribute("MapID")
+    return type(mapId) == "string" and mapId ~= ""
+end
+
+local function GetRootPositionFromSource(source)
+    if typeof(source) == "Vector3" then
+        return source
+    end
+
+    local player = source
+    if not player then
+        player = LocalPlayer
+    end
+
+    if typeof(player) == "Instance" and player:IsA("Player") and player.Character then
+        local root = player.Character:FindFirstChild("HumanoidRootPart")
+            or player.Character:FindFirstChild("Head")
+            or player.Character.PrimaryPart
+        if root and root:IsA("BasePart") then
+            return root.Position
+        end
+    end
+
+    return nil
 end
 
 -- [[ PUBLIC FUNCTIONS ]] --
@@ -109,6 +140,70 @@ function MM2Data:IsPlayerInRound(player)
     end
     
     return false
+end
+
+-- 4. Get current round map (direct child of workspace with MapID attribute)
+function MM2Data:GetMap()
+    local fallbackMap = nil
+
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if IsLikelyMap(child) then
+            -- Prefer an active map that already has coin state objects.
+            if child:FindFirstChild("CoinContainer") then
+                return child
+            end
+            if child:FindFirstChild("CoinAreas") or child:FindFirstChild("Spawns") then
+                fallbackMap = fallbackMap or child
+            else
+                fallbackMap = fallbackMap or child
+            end
+        end
+    end
+
+    return fallbackMap
+end
+
+-- 5. Get nearest coin in active map's CoinContainer
+-- Returns: coinInstance, coinPath, distance
+function MM2Data:GetNearestCoin(fromSource)
+    local map = self:GetMap()
+    if not map then
+        return nil, nil, nil
+    end
+
+    local coinContainer = map:FindFirstChild("CoinContainer")
+    if not coinContainer then
+        return nil, nil, nil
+    end
+
+    local origin = GetRootPositionFromSource(fromSource)
+    if not origin then
+        return nil, nil, nil
+    end
+
+    local nearestCoin = nil
+    local nearestDistance = math.huge
+
+    for _, coin in ipairs(coinContainer:GetChildren()) do
+        local coinPart = coin
+        if not coinPart:IsA("BasePart") then
+            coinPart = coin:FindFirstChildWhichIsA("BasePart")
+        end
+
+        if coinPart and coinPart:IsA("BasePart") then
+            local dist = (coinPart.Position - origin).Magnitude
+            if dist < nearestDistance then
+                nearestCoin = coin
+                nearestDistance = dist
+            end
+        end
+    end
+
+    if not nearestCoin then
+        return nil, nil, nil
+    end
+
+    return nearestCoin, nearestCoin:GetFullName(), nearestDistance
 end
 
 return MM2Data
