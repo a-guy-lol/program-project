@@ -131,7 +131,7 @@ local RETARGET_MARGIN_NEAR = 1.8
 local RETARGET_MARGIN_FAR = 3.6
 local COIN_TOUCHED_IGNORE_TIME = 1.0
 local LOCAL_TOUCH_RETARGET_DELAY = 0.02
-local MAX_STUCK_NEAR_TARGET_TIME = 0.9
+local MAX_STUCK_NEAR_TARGET_TIME = 0.55
 local FORCED_TOUCH_DISTANCE = 0.95
 local clearCoinTouchConnections
 
@@ -295,8 +295,8 @@ local function disconnectCoinTouch(coin)
 		return
 	end
 	if entry.connections then
-		for _, conn in ipairs(entry.connections) do
-			conn:Disconnect()
+		for _, connection in ipairs(entry.connections) do
+			connection:Disconnect()
 		end
 	end
 	coinTouchConnections[coin] = nil
@@ -986,7 +986,6 @@ task.spawn(function()
 							activeTargetCoin = nil
 							activeTargetPos = nil
 						elseif touchedByLocal then
-							-- Immediate retarget after local touch; no idle wait at coin.
 							skippedCoins[activeTargetCoin] = now + LOCAL_TOUCH_RETARGET_DELAY
 							mv:StopGoto()
 							activeTargetCoin = nil
@@ -1000,35 +999,33 @@ task.spawn(function()
 								activeTargetCoin = nil
 								activeTargetPos = nil
 							elseif bagIncreased then
-								if dist <= TARGET_COMMIT_DISTANCE then
+								-- Bag increase means we collected a coin; release target immediately to avoid stale waits.
+								skippedCoins[activeTargetCoin] = now + 0.08
+								mv:StopGoto()
+								activeTargetCoin = nil
+								activeTargetPos = nil
+								activeTargetBagAtStart = bagCurrent
+							elseif elapsed >= MAX_STUCK_NEAR_TARGET_TIME then
+								skippedCoins[activeTargetCoin] = now + 0.08
+								mv:StopGoto()
+								activeTargetCoin = nil
+								activeTargetPos = nil
+							elseif bestCoin and bestCoin ~= activeTargetCoin and elapsed >= TARGET_MIN_HOLD_TIME then
+								local shouldSwitch = false
+								if dist > TARGET_FOCUS_RANGE and bestDist <= TARGET_FOCUS_RANGE then
+									shouldSwitch = true
+								elseif dist <= TARGET_FOCUS_RANGE and bestDist <= TARGET_FOCUS_RANGE then
+									shouldSwitch = dist > TARGET_COMMIT_DISTANCE and ((bestDist + RETARGET_MARGIN_NEAR) < dist)
+								else
+									shouldSwitch = dist > TARGET_COMMIT_DISTANCE and ((bestDist + RETARGET_MARGIN_FAR) < dist)
+								end
+
+								if shouldSwitch then
 									skippedCoins[activeTargetCoin] = now + 0.12
 									mv:StopGoto()
 									activeTargetCoin = nil
 									activeTargetPos = nil
-								else
-									-- Another coin may have been collected at the same time; keep target unless close/touched.
-									activeTargetBagAtStart = bagCurrent
 								end
-							elseif elapsed >= MAX_STUCK_NEAR_TARGET_TIME and dist <= TARGET_COMMIT_DISTANCE then
-								skippedCoins[activeTargetCoin] = now + 0.45
-								mv:StopGoto()
-								activeTargetCoin = nil
-								activeTargetPos = nil
-						elseif bestCoin and bestCoin ~= activeTargetCoin and elapsed >= TARGET_MIN_HOLD_TIME then
-							local shouldSwitch = false
-							if dist > TARGET_FOCUS_RANGE and bestDist <= TARGET_FOCUS_RANGE then
-								shouldSwitch = true
-							elseif dist <= TARGET_FOCUS_RANGE and bestDist <= TARGET_FOCUS_RANGE then
-								shouldSwitch = dist > TARGET_COMMIT_DISTANCE and ((bestDist + RETARGET_MARGIN_NEAR) < dist)
-							else
-								shouldSwitch = dist > TARGET_COMMIT_DISTANCE and ((bestDist + RETARGET_MARGIN_FAR) < dist)
-							end
-
-							if shouldSwitch then
-								skippedCoins[activeTargetCoin] = now + 0.12
-								mv:StopGoto()
-								activeTargetCoin = nil
-								activeTargetPos = nil
 							end
 						end
 					end
