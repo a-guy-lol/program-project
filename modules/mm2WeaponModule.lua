@@ -162,14 +162,17 @@ function MM2WeaponModule:UseGun(target)
 		return false, "no_character"
 	end
 
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local raycastAttachment = hrp and hrp:FindFirstChild("GunRaycastAttachment")
+	local originCFrame = (raycastAttachment and raycastAttachment:IsA("Attachment")) and raycastAttachment.WorldCFrame or nil
+
 	local targetCFrame = ResolveTargetCFrame(targetPlayer)
 	if not targetCFrame then
 		return false, "target_no_character"
 	end
 
-	-- Wall-ignore mode: use the target cframe as origin and target.
-	-- This bypasses the local CantShoot LOS check path since we do not use that script flow.
-	shootRemote:FireServer(targetCFrame, targetCFrame)
+	-- This bypasses local CantShoot UI logic because we call the remote directly.
+	shootRemote:FireServer(originCFrame, targetCFrame)
 	return true
 end
 
