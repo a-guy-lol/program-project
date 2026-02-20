@@ -32,6 +32,21 @@ local function isAlive(player)
 	return hum and hum.Health > 0
 end
 
+local function getRoundRolesSafe()
+	local ok, roles = pcall(function()
+		return mm2RoundClient:GetRoundRoles()
+	end)
+	if ok and type(roles) == "table" then
+		return roles
+	end
+	return nil
+end
+
+local function isLocalMurderer()
+	local roles = getRoundRolesSafe()
+	return roles and roles.Murderer == LocalPlayer
+end
+
 local function ensureSafePlatform()
 	local platform = workspace:FindFirstChild(PLATFORM_NAME)
 	if platform and platform:IsA("Part") then
@@ -282,7 +297,7 @@ local function getNearestSelectableCoin(coinContainer)
 end
 
 local function shootMurderer()
-	local roles = mm2RoundClient:GetRoundRoles()
+	local roles = getRoundRolesSafe()
 	local murderer = roles and roles.Murderer
 	if not murderer then
 		UI:AddNoti("Shoot", "No murderer found.", 2)
@@ -346,33 +361,39 @@ local function tryAutoHandleMurder()
 		return false
 	end
 
-	local roles = mm2RoundClient:GetRoundRoles()
+	local roles = getRoundRolesSafe()
 	local murderer = roles and roles.Murderer
 	if not murderer or murderer == LocalPlayer or not isAlive(murderer) then
 		return false
 	end
 
-	local myRoot = getRoot(LocalPlayer)
-	local targetRoot = getRoot(murderer)
-	if not myRoot or not targetRoot then
-		return false
-	end
-
 	autoHandleInProgress = true
 	task.spawn(function()
-		local safeBehind = math.random(5, 6)
-		local behind = targetRoot.CFrame * CFrame.new(0, 0, safeBehind)
-		myRoot.CFrame = CFrame.new(behind.Position, targetRoot.Position)
-		task.wait(0.06)
+		local ok = pcall(function()
+			local currentMurderer = murderer
+			local myRoot = getRoot(LocalPlayer)
+			local targetRoot = getRoot(currentMurderer)
+			if not myRoot or not targetRoot then
+				return
+			end
 
-		mm2WeaponClient:UseGun(murderer)
+			local safeBehind = math.random(5, 6)
+			local behind = targetRoot.CFrame * CFrame.new(0, 0, safeBehind)
+			myRoot.CFrame = CFrame.new(behind.Position, targetRoot.Position)
+			task.wait(0.06)
 
-		-- Wait for likely gun cooldown/server acceptance window before retrying.
-		task.wait(AUTO_HANDLE_SHOT_WAIT)
-		teleportToPlatform(true)
+			mm2WeaponClient:UseGun(currentMurderer)
+
+			-- Wait for likely gun cooldown/server acceptance window before retrying.
+			task.wait(AUTO_HANDLE_SHOT_WAIT)
+			teleportToPlatform(true)
+		end)
 
 		nextAutoHandleAt = os.clock() + AUTO_HANDLE_RETRY_COOLDOWN
 		autoHandleInProgress = false
+		if not ok then
+			teleportToPlatform(false)
+		end
 	end)
 
 	return true
@@ -590,7 +611,7 @@ task.spawn(function()
 			stopCoinMovement(true)
 			teleportToPlatform(false)
 			if flingSheriffEndRoundEnabled then
-				local roles = mm2RoundClient:GetRoundRoles()
+				local roles = getRoundRolesSafe()
 				local murderer = roles and roles.Murderer
 				local now = os.clock()
 				if canFlingTarget(murderer) and (now - lastFlingMurderAt) >= FLING_COOLDOWN then
@@ -628,7 +649,7 @@ task.spawn(function()
 			local hasGun = mm2WeaponClient:HasGun()
 
 			if flingSheriffEndRoundEnabled and (not hasGun) then
-				local roles = mm2RoundClient:GetRoundRoles()
+				local roles = getRoundRolesSafe()
 				local sheriff = roles and roles.Sheriff
 				if canFlingTarget(sheriff) and (now - lastFlingSheriffAt) >= FLING_COOLDOWN then
 					lastFlingSheriffAt = now
