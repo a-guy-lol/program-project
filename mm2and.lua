@@ -134,8 +134,14 @@ local flingingSheriff = false
 local flingingMurder = false
 local autoHandleInProgress = false
 local nextAutoHandleAt = 0
-local AUTO_HANDLE_SHOT_WAIT = 0.9
-local AUTO_HANDLE_RETRY_COOLDOWN = 1.2
+local AUTO_HANDLE_REPOSITION_ATTEMPTS = 4
+local AUTO_HANDLE_SHOT_RETRY_ATTEMPTS = 4
+local AUTO_HANDLE_PRE_SHOT_WAIT = 0.16
+local AUTO_HANDLE_SHOT_RETRY_WAIT = 0.18
+local AUTO_HANDLE_POST_SHOT_WAIT = 0.7
+local AUTO_HANDLE_MIN_ATTEMPT_TIME = 0.95
+local AUTO_HANDLE_RETRY_COOLDOWN = 1.35
+local AUTO_HANDLE_FAIL_COOLDOWN = 1.9
 local prevRoundActive = false
 
 local function stopCoinMovement(disableAll)
@@ -369,30 +375,90 @@ local function tryAutoHandleMurder()
 
 	autoHandleInProgress = true
 	task.spawn(function()
+		local shotSent = false
+		local hadError = false
+		local startedAt = os.clock()
+
 		local ok = pcall(function()
 			local currentMurderer = murderer
-			local myRoot = getRoot(LocalPlayer)
-			local targetRoot = getRoot(currentMurderer)
-			if not myRoot or not targetRoot then
-				return
+			local hardStop = os.clock() + 3.5
+
+			for attempt = 1, AUTO_HANDLE_REPOSITION_ATTEMPTS do
+				if not autoHandleMurderEnabled then
+					break
+				end
+				if os.clock() >= hardStop then
+					break
+				end
+				if not mm2RoundClient:IsRoundActive() or not isAlive(currentMurderer) then
+					break
+				end
+
+				local myRoot = getRoot(LocalPlayer)
+				local targetRoot = getRoot(currentMurderer)
+				if not myRoot or not targetRoot then
+					break
+				end
+
+				local backDistance = 4.4 + ((attempt - 1) * 0.35)
+				local sideOffset = 0
+				if attempt == 2 then
+					sideOffset = 1.2
+				elseif attempt >= 3 then
+					sideOffset = -1.2
+				end
+
+				local behindPos = targetRoot.Position
+					- (targetRoot.CFrame.LookVector * backDistance)
+					+ (targetRoot.CFrame.RightVector * sideOffset)
+
+				myRoot.CFrame = CFrame.new(behindPos, targetRoot.Position)
+				task.wait(AUTO_HANDLE_PRE_SHOT_WAIT)
+
+				for _ = 1, AUTO_HANDLE_SHOT_RETRY_ATTEMPTS do
+					if not autoHandleMurderEnabled then
+						break
+					end
+					if not mm2RoundClient:IsRoundActive() or not isAlive(currentMurderer) then
+						break
+					end
+
+					local fired = select(1, mm2WeaponClient:UseGun(currentMurderer))
+					if fired then
+						shotSent = true
+						break
+					end
+					task.wait(AUTO_HANDLE_SHOT_RETRY_WAIT)
+				end
+
+				if shotSent then
+					break
+				end
+				task.wait(0.24)
 			end
-
-			local safeBehind = math.random(5, 6)
-			local behind = targetRoot.CFrame * CFrame.new(0, 0, safeBehind)
-			myRoot.CFrame = CFrame.new(behind.Position, targetRoot.Position)
-			task.wait(0.06)
-
-			mm2WeaponClient:UseGun(currentMurderer)
-
-			-- Wait for likely gun cooldown/server acceptance window before retrying.
-			task.wait(AUTO_HANDLE_SHOT_WAIT)
-			teleportToPlatform(true)
 		end)
 
-		nextAutoHandleAt = os.clock() + AUTO_HANDLE_RETRY_COOLDOWN
-		autoHandleInProgress = false
 		if not ok then
-			teleportToPlatform(false)
+			hadError = true
+		end
+
+		local elapsed = os.clock() - startedAt
+		if elapsed < AUTO_HANDLE_MIN_ATTEMPT_TIME then
+			task.wait(AUTO_HANDLE_MIN_ATTEMPT_TIME - elapsed)
+		end
+
+		if shotSent then
+			task.wait(AUTO_HANDLE_POST_SHOT_WAIT)
+			nextAutoHandleAt = os.clock() + AUTO_HANDLE_RETRY_COOLDOWN
+		else
+			nextAutoHandleAt = os.clock() + AUTO_HANDLE_FAIL_COOLDOWN
+		end
+
+		teleportToPlatform(true)
+		autoHandleInProgress = false
+
+		if hadError then
+			nextAutoHandleAt = math.max(nextAutoHandleAt, os.clock() + AUTO_HANDLE_FAIL_COOLDOWN)
 		end
 	end)
 
@@ -641,33 +707,35 @@ task.spawn(function()
 			continue
 		end
 
-		if bagMax > 0 and bagCurrent >= bagMax then
-			stopCoinMovement(true)
-			teleportToPlatform(false)
+			if bagMax > 0 and bagCurrent >= bagMax then
+				stopCoinMovement(true)
 
-			local now = os.clock()
-			local hasGun = mm2WeaponClient:HasGun()
+				local now = os.clock()
+				local hasGun = mm2WeaponClient:HasGun()
+				local shouldAutoHandle = autoHandleMurderEnabled and hasGun
 
-			if flingSheriffEndRoundEnabled and (not hasGun) then
-				local roles = getRoundRolesSafe()
-				local sheriff = roles and roles.Sheriff
+				if flingSheriffEndRoundEnabled and (not hasGun) then
+					local roles = getRoundRolesSafe()
+					local sheriff = roles and roles.Sheriff
 				if canFlingTarget(sheriff) and (now - lastFlingSheriffAt) >= FLING_COOLDOWN then
 					lastFlingSheriffAt = now
 					startFlingTarget(sheriff, "sheriff")
 				end
 			end
 
-			if autoKnifeAllEnabled and (now - lastAutoKnifeAllAt) >= 0.5 and isLocalMurderer() then
-				lastAutoKnifeAllAt = now
-				mm2WeaponClient:UseKnifeAll()
-			end
+				if autoKnifeAllEnabled and (now - lastAutoKnifeAllAt) >= 0.5 and isLocalMurderer() then
+					lastAutoKnifeAllAt = now
+					mm2WeaponClient:UseKnifeAll()
+				end
 
-			if autoHandleMurderEnabled then
-				tryAutoHandleMurder()
-			end
+				if shouldAutoHandle then
+					tryAutoHandleMurder()
+				elseif not autoHandleInProgress then
+					teleportToPlatform(false)
+				end
 
-			continue
-		end
+				continue
+			end
 
 		if not ensureCoinMovementEnabled() then
 			continue

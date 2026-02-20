@@ -57,6 +57,18 @@ local function EnsureToolEquipped(tool)
 		return false
 	end
 	hum:EquipTool(tool)
+	if tool.Parent == character then
+		return true
+	end
+
+	local deadline = os.clock() + 0.35
+	while os.clock() < deadline do
+		if tool.Parent == character then
+			return true
+		end
+		task.wait(0.03)
+	end
+
 	return tool.Parent == character
 end
 
