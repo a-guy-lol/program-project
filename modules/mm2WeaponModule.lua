@@ -2,12 +2,22 @@ local MM2WeaponModule = {}
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local CurrentRoundClient = nil
 
 pcall(function()
 	CurrentRoundClient = require(ReplicatedStorage.Modules.CurrentRoundClient)
 end)
+
+MM2WeaponModule.Prediction = {
+	Enabled = false,
+	ShotDelay = 0.1,
+	ExtraDelay = 0.02,
+	MinLead = 0.02,
+	MaxLead = 0.3,
+	MaxVelocity = 45,
+}
 
 local function IsTool(x)
 	return typeof(x) == "Instance" and x:IsA("Tool")
@@ -113,7 +123,7 @@ end
 
 local function ResolveTargetCFrame(targetPlayer)
 	if not targetPlayer or not targetPlayer.Character then
-		return nil
+		return nil, nil
 	end
 
 	local targetPart = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -121,10 +131,50 @@ local function ResolveTargetCFrame(targetPlayer)
 		or targetPlayer.Character:FindFirstChildWhichIsA("BasePart")
 
 	if not targetPart then
-		return nil
+		return nil, nil
 	end
 
-	return targetPart.CFrame
+	return targetPart.CFrame, targetPart
+end
+
+local function IsTargetVisible(targetPart, targetCharacter)
+	local localCharacter = GetCharacter()
+	if not localCharacter or not targetPart then
+		return false
+	end
+
+	local originPart = localCharacter:FindFirstChild("Head")
+		or localCharacter:FindFirstChild("HumanoidRootPart")
+		or localCharacter.PrimaryPart
+	if not originPart then
+		return false
+	end
+
+	local direction = targetPart.Position - originPart.Position
+	if direction.Magnitude <= 0.01 then
+		return true
+	end
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Blacklist
+	rayParams.FilterDescendantsInstances = { localCharacter }
+
+	local hit = Workspace:Raycast(originPart.Position, direction, rayParams)
+	if not hit then
+		return true
+	end
+	return hit.Instance and targetCharacter and hit.Instance:IsDescendantOf(targetCharacter)
+end
+
+local function BuildPredictedCFrame(targetPart, prediction)
+	local velocity = targetPart.AssemblyLinearVelocity
+	if velocity.Magnitude > prediction.MaxVelocity then
+		velocity = velocity.Unit * prediction.MaxVelocity
+	end
+
+	local lead = math.clamp(prediction.ShotDelay + prediction.ExtraDelay, prediction.MinLead, prediction.MaxLead)
+	local predictedPos = targetPart.Position + (velocity * lead)
+	return CFrame.new(predictedPos)
 end
 
 function MM2WeaponModule:HasGun()
@@ -166,14 +216,30 @@ function MM2WeaponModule:UseGun(target)
 	local raycastAttachment = hrp and hrp:FindFirstChild("GunRaycastAttachment")
 	local originCFrame = (raycastAttachment and raycastAttachment:IsA("Attachment")) and raycastAttachment.WorldCFrame or nil
 
-	local targetCFrame = ResolveTargetCFrame(targetPlayer)
+	local targetCFrame, targetPart = ResolveTargetCFrame(targetPlayer)
 	if not targetCFrame then
 		return false, "target_no_character"
+	end
+	if not IsTargetVisible(targetPart, targetPlayer.Character) then
+		return false, "not_visible"
+	end
+
+	if self.Prediction.Enabled then
+		targetCFrame = BuildPredictedCFrame(targetPart, self.Prediction)
 	end
 
 	-- This bypasses local CantShoot UI logic because we call the remote directly.
 	shootRemote:FireServer(originCFrame, targetCFrame)
 	return true
+end
+
+function MM2WeaponModule:TogglePrediction(enabled)
+	if enabled == nil then
+		self.Prediction.Enabled = not self.Prediction.Enabled
+	elseif type(enabled) == "boolean" then
+		self.Prediction.Enabled = enabled
+	end
+	return self.Prediction.Enabled
 end
 
 function MM2WeaponModule:UseKnife(target)
