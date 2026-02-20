@@ -9,6 +9,7 @@ local ZexonUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy
 -- Requested module names.
 local mm2RoundClient = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/MM2-RoundModule.lua"))()
 local mm2WeaponClient = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/mm2WeaponModule.lua"))()
+local flingClient = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/flingPlayerModule.lua"))()
 local mv = loadstring(game:HttpGet("https://raw.githubusercontent.com/a-guy-lol/program-project/refs/heads/main/modules/moveVelocityModule.lua"))()
 
 local PLATFORM_POS = Vector3.new(200, 500, 200)
@@ -98,6 +99,7 @@ local optimizedCoinCollectionEnabled = false
 local autoKnifeAllEnabled = false
 local autoHandleMurderEnabled = false
 local autoCollectGunDropEnabled = false
+local flingSheriffEndRoundEnabled = false
 
 local coinMoveEnabled = false
 local activeTargetCoin = nil
@@ -110,7 +112,15 @@ local bagCurrent = 0
 local bagMax = 0
 
 local lastAutoKnifeAllAt = 0
-local lastAutoHandleAt = 0
+local lastFlingSheriffAt = 0
+local lastFlingMurderAt = 0
+local FLING_COOLDOWN = 1.4
+local flingingSheriff = false
+local flingingMurder = false
+local autoHandleInProgress = false
+local nextAutoHandleAt = 0
+local AUTO_HANDLE_SHOT_WAIT = 0.9
+local AUTO_HANDLE_RETRY_COOLDOWN = 1.2
 local prevRoundActive = false
 
 local function stopCoinMovement(disableAll)
@@ -285,33 +295,87 @@ local function shootMurderer()
 	end
 end
 
+local function canFlingTarget(player)
+	return player and player ~= LocalPlayer and isAlive(player)
+end
+
+local function startFlingTarget(targetPlayer, mode)
+	if not canFlingTarget(targetPlayer) then
+		return false
+	end
+
+	if mode == "sheriff" then
+		if flingingSheriff then
+			return false
+		end
+		flingingSheriff = true
+	else
+		if flingingMurder then
+			return false
+		end
+		flingingMurder = true
+	end
+
+	task.spawn(function()
+		pcall(function()
+			flingClient:Fling(targetPlayer, 4, true)
+		end)
+		if mode == "sheriff" then
+			flingingSheriff = false
+		else
+			flingingMurder = false
+		end
+	end)
+
+	return true
+end
+
 local function tryAutoHandleMurder()
 	if not autoHandleMurderEnabled then
-		return
+		return false
 	end
 	if not mm2WeaponClient:HasGun() then
-		return
+		return false
+	end
+	if autoHandleInProgress then
+		return false
+	end
+
+	local now = os.clock()
+	if now < nextAutoHandleAt then
+		return false
 	end
 
 	local roles = mm2RoundClient:GetRoundRoles()
 	local murderer = roles and roles.Murderer
 	if not murderer or murderer == LocalPlayer or not isAlive(murderer) then
-		return
+		return false
 	end
 
 	local myRoot = getRoot(LocalPlayer)
 	local targetRoot = getRoot(murderer)
 	if not myRoot or not targetRoot then
-		return
+		return false
 	end
 
-	local safeBehind = math.random(5, 6)
-	local behind = targetRoot.CFrame * CFrame.new(0, 0, safeBehind)
-	myRoot.CFrame = CFrame.new(behind.Position, targetRoot.Position)
-	task.wait(0.03)
-	mm2WeaponClient:UseGun(murderer)
-	task.wait(0.06)
-	teleportToPlatform(true)
+	autoHandleInProgress = true
+	task.spawn(function()
+		local safeBehind = math.random(5, 6)
+		local behind = targetRoot.CFrame * CFrame.new(0, 0, safeBehind)
+		myRoot.CFrame = CFrame.new(behind.Position, targetRoot.Position)
+		task.wait(0.06)
+
+		mm2WeaponClient:UseGun(murderer)
+
+		-- Wait for likely gun cooldown/server acceptance window before retrying.
+		task.wait(AUTO_HANDLE_SHOT_WAIT)
+		teleportToPlatform(true)
+
+		nextAutoHandleAt = os.clock() + AUTO_HANDLE_RETRY_COOLDOWN
+		autoHandleInProgress = false
+	end)
+
+	return true
 end
 
 local function tryAutoCollectGunDrop(map)
@@ -457,6 +521,13 @@ CoinSection:CreateToggle("Auto Collect GunDrop", {
 	autoCollectGunDropEnabled = state
 end)
 
+CoinSection:CreateToggle("Fling Sheriff + End Round", {
+	Description = "When bag is full and no gun, fling sheriff. If you are dead/out-of-round while round is active, fling murderer.",
+	Toggled = false,
+}, function(state)
+	flingSheriffEndRoundEnabled = state
+end)
+
 CoinSection:CreateParagraph(
 	"Notes",
 	"Speed is dynamic 17.5 to 25 while far, never below 17.5. Platform teleports are throttled and only used when needed.",
@@ -518,6 +589,15 @@ task.spawn(function()
 		if roundActive and not localInRound then
 			stopCoinMovement(true)
 			teleportToPlatform(false)
+			if flingSheriffEndRoundEnabled then
+				local roles = mm2RoundClient:GetRoundRoles()
+				local murderer = roles and roles.Murderer
+				local now = os.clock()
+				if canFlingTarget(murderer) and (now - lastFlingMurderAt) >= FLING_COOLDOWN then
+					lastFlingMurderAt = now
+					startFlingTarget(murderer, "murder")
+				end
+			end
 			continue
 		end
 
@@ -545,13 +625,23 @@ task.spawn(function()
 			teleportToPlatform(false)
 
 			local now = os.clock()
+			local hasGun = mm2WeaponClient:HasGun()
+
+			if flingSheriffEndRoundEnabled and (not hasGun) then
+				local roles = mm2RoundClient:GetRoundRoles()
+				local sheriff = roles and roles.Sheriff
+				if canFlingTarget(sheriff) and (now - lastFlingSheriffAt) >= FLING_COOLDOWN then
+					lastFlingSheriffAt = now
+					startFlingTarget(sheriff, "sheriff")
+				end
+			end
+
 			if autoKnifeAllEnabled and (now - lastAutoKnifeAllAt) >= 0.5 and isLocalMurderer() then
 				lastAutoKnifeAllAt = now
 				mm2WeaponClient:UseKnifeAll()
 			end
 
-			if autoHandleMurderEnabled and (now - lastAutoHandleAt) >= 0.7 then
-				lastAutoHandleAt = now
+			if autoHandleMurderEnabled then
 				tryAutoHandleMurder()
 			end
 
